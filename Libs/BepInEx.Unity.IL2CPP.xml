@@ -79,6 +79,13 @@
         <member name="M:BepInEx.Unity.IL2CPP.Configuration.KeyboardShortcut.GetHashCode">
             <inheritdoc />
         </member>
+        <member name="M:BepInEx.Unity.IL2CPP.Hook.INativeDetour.FollowExportThunks(System.IntPtr)">
+            <summary>
+            PE exports are often a <c>jmp rel32</c> (or <c>jmp [rip+disp]</c>) stub with int3 padding.
+            Dobby aborts if asked to patch that stub. Follow to the real prologue first.
+            No-op when the pointer is already a function body.
+            </summary>
+        </member>
         <member name="M:BepInEx.Unity.IL2CPP.IL2CPPChainloader.AddUnityComponent``1">
             <summary>
                 Register and add a Unity Component (for example MonoBehaviour) into BepInEx global manager.

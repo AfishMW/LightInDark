@@ -17,7 +17,6 @@ namespace LightInDark.Roles
     ///  - 必须重写 <see cref="CodeName"/>（唯一内部名，兼作语言/配置键前缀）
     ///  - 必须重写 <see cref="IntroBlurbKey"/>（开场白语言键，译文不可为空）
     ///  - 可选重写 <see cref="IntroSFX"/>（相对路径 mp3，YouAreText 出现时播放）
-    ///  - 静态配置用 <see cref="RoleOptionAttribute"/> 标记（注册时自动扫描绑定 cfg）
     /// </summary>
     public abstract class Role : ILifespan, IGameOperator, IBindPlayer
     {

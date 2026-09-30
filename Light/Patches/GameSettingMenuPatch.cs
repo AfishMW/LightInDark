@@ -3,29 +3,438 @@ using HarmonyLib;
 using LightInDark.Core;
 using LightInDark.Language;
 using LightInDark.UI.Window;
-using Light.UI.Settings;
+using Light.UI.Window;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
 using Object = UnityEngine.Object;
+using UColor = UnityEngine.Color;
 
 namespace Light.Patches;
 
 /// <summary>
-/// 原版规则编辑界面（GameSettingMenu）增强（参考 Nebula，复制粘贴式改造）：
-///  - 把原版三个选项卡按钮（预设/游戏设置/角色设置）克隆成三份，删除原版按钮，
-///    顶部排开：原版设置 | MOD设置 | 预设（SelectButton 高亮，当前页常亮）；
-///  - 原版设置 → 原版游戏设置页；预设 → 原版预设页；MOD设置 → 内嵌的模组配置页；
-///  - MOD 配置页 = 克隆原版"游戏设置"内容页（含原版滚动容器），清空后内嵌 LIDGUI 内容；
-///  - 最底层加半透明遮罩，遮住层级混乱的背景。
+/// 原版规则编辑界面（GameSettingMenu）改造 —— 框架版（本轮只搭界面，功能下一轮）：
+///  - 保留原版三个主按钮（样式/位置不动），仅把第三个按钮文本改为「MOD 设置」；
+///  - 「游戏设置」页签保留原版内容不动；
+///  - 「预设」页签替换为 4 按钮框架（图片留空 + 下方文字 + hover 换图槽位 + 点击无效果）；
+///  - 「MOD 设置」页签替换为 6 个彩色边框标签（不显示文字，边框中间留空放图标槽位），
+///    点击标签在下方显示「XX页签暂未实现。」。
+/// 图片资源美术未完成，全部留空槽位（null 安全，不崩）。
 /// </summary>
 [HarmonyPatch]
 public static class GameSettingMenuPatch
 {
-    private static readonly PassiveButton?[] _tabButtons = new PassiveButton?[3];
-    private static int _activeTab = -1;
+    /// <summary>MOD 设置页 6 个分类标签：彩色边框，不显示文字，中间留空放图标。</summary>
+    private static readonly (string Key, string Cn, UColor BorderColor)[] ModTabs =
+    {
+        ("MOD",   "MOD",  new UColor(0.55f, 0.55f, 0.55f, 1f)), // 灰
+        ("CREWS", "船员",  new UColor(0.20f, 0.55f, 1.00f, 1f)), // 蓝
+        ("IMP",   "内鬼",  new UColor(1.00f, 0.25f, 0.20f, 1f)), // 红
+        ("NEU",   "中立",  new UColor(0.55f, 0.55f, 0.55f, 1f)), // 灰
+        ("MODI",  "附加",  new UColor(1.00f, 0.85f, 0.20f, 1f)), // 黄
+        ("GHOST", "幽灵",  new UColor(0.90f, 0.90f, 0.90f, 1f)), // 白
+    };
+
+    private static readonly string[] PresetLabels =
+    {
+        "加载预设", "保存预设", "导出预设为TXT文件", "导入预设",
+    };
+
+    // ---- 美术资源槽位（未完成，先留空；访问一律 null 安全，不崩）----
+    private static Sprite? _tabIconNormal;    // TODO: 标签图标（默认）
+    private static Sprite? _tabIconHover;     // TODO: 标签图标（鼠标悬停）
+    private static Sprite? _presetImageNormal; // TODO: 预设按钮图片（默认）
+    private static Sprite? _presetImageHover;  // TODO: 预设按钮图片（鼠标悬停）
+
+    // ---- 尺寸 ----
+    private const float TabWidth = 0.8f;
+    private const float TabHeight = 0.8f;
+    private const float TabSpacing = 1.05f;
+    private const float TabBorderThickness = 0.06f;
+    private const float IconSize = 0.45f;
+
+    private const float PresetWidth = 1.5f;
+    private const float PresetHeight = 0.75f;
+    private const float PresetSpacingX = 1.7f;
+    private const float PresetSpacingY = 1.0f;
+
+    // ---- 运行时引用 ----
+    private static GameObject? _presetsPage;
     private static GameObject? _modPage;
-    private static GameObject? _mask;
+    private static TextMeshPro? _modPlaceholderText;
+
+    // =====================================================================
+    //  Harmony Patches
+    // =====================================================================
+
+    [HarmonyPatch(typeof(GameSettingMenu), nameof(GameSettingMenu.Start))]
+    [HarmonyPostfix]
+    public static void StartPostfix(GameSettingMenu __instance)
+    {
+        try
+        {
+            RenameThirdTabButton(__instance);
+            BuildPages(__instance);
+
+            // 构建完成后立刻应用一次，确保刚打开的页签不会同时露出原版内容
+            ApplyPresetsVisibility();
+            ApplyModVisibility();
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.StartPostfix]", ex);
+        }
+    }
+
+    [HarmonyPatch(typeof(GameSettingMenu), nameof(GameSettingMenu.Close))]
+    [HarmonyPostfix]
+    public static void ClosePostfix()
+    {
+        // 菜单销毁：清空引用，下次打开重新构建
+        _presetsPage = null;
+        _modPage = null;
+        _modPlaceholderText = null;
+    }
+
+    /// <summary>预设页启用时：只显示我们的框架页，隐藏原版预设内容。</summary>
+    [HarmonyPatch(typeof(GamePresetsTab), nameof(GamePresetsTab.OnEnable))]
+    [HarmonyPostfix]
+    public static void PresetsOnEnablePostfix()
+    {
+        ApplyPresetsVisibility();
+    }
+
+    /// <summary>MOD 设置页（原版职业设置页）启用时：只显示我们的框架页。</summary>
+    [HarmonyPatch(typeof(RolesSettingsMenu), nameof(RolesSettingsMenu.OnEnable))]
+    [HarmonyPostfix]
+    public static void RolesOnEnablePostfix()
+    {
+        ApplyModVisibility();
+    }
+
+    /// <summary>
+    /// 原版 OpenMenu/ChangeTab 会走 OpenChancesTab，把 RoleChancesSettings 重新 SetActive(true)，
+    /// 因此在其之后再压一次显示状态。
+    /// </summary>
+    [HarmonyPatch(typeof(RolesSettingsMenu), nameof(RolesSettingsMenu.OpenChancesTab),
+        new Type[] { typeof(bool) })]
+    [HarmonyPostfix]
+    public static void RolesOpenChancesTabPostfix()
+    {
+        ApplyModVisibility();
+    }
+
+    // =====================================================================
+    //  显示状态
+    // =====================================================================
+
+    private static void ApplyPresetsVisibility()
+    {
+        try
+        {
+            if (_presetsPage == null) return;
+            var parent = _presetsPage.transform.parent;
+            if (parent == null) return;
+            HideChildrenExcept(parent, _presetsPage);
+            _presetsPage.SetActive(true);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.ApplyPresetsVisibility]", ex);
+        }
+    }
+
+    private static void ApplyModVisibility()
+    {
+        try
+        {
+            if (_modPage == null) return;
+            var parent = _modPage.transform.parent;
+            if (parent == null) return;
+            HideChildrenExcept(parent, _modPage);
+            _modPage.SetActive(true);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.ApplyModVisibility]", ex);
+        }
+    }
+
+    /// <summary>隐藏 parent 的所有直接子对象，except 例外（保留显示）。</summary>
+    private static void HideChildrenExcept(Transform parent, GameObject? except)
+    {
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            var child = parent.GetChild(i);
+            if (child == null) continue;
+            if (except != null && child == except.transform) continue;
+            child.gameObject.SetActive(false);
+        }
+    }
+
+    // =====================================================================
+    //  第三个主按钮改名
+    // =====================================================================
+
+    private static void RenameThirdTabButton(GameSettingMenu menu)
+    {
+        try
+        {
+            // 按文本找（中文 / 英文），找不到再按对象名兜底
+            var rolesBtn = FindButtonByText(menu, "角色设置")
+                ?? FindButtonByText(menu, "Role Setting");
+            if (rolesBtn == null)
+            {
+                var byName = FindChildRecursive(menu.transform, "RoleSettingsButton")
+                    ?? FindChildRecursive(menu.transform, "RolesButton")
+                    ?? FindChildRecursive(menu.transform, "RoleSettings");
+                if (byName != null) rolesBtn = byName.GetComponent<PassiveButton>();
+            }
+
+            if (rolesBtn == null)
+            {
+                LightLogger.LogWarning("[GameSettingMenuPatch] 未找到第三个主按钮，跳过改名");
+                return;
+            }
+
+            SetButtonText(rolesBtn, Language.Translate("gss.tab.mod", "MOD 设置"));
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.RenameThirdTabButton]", ex);
+        }
+    }
+
+    // =====================================================================
+    //  框架页构建
+    // =====================================================================
+
+    private static void BuildPages(GameSettingMenu menu)
+    {
+        try
+        {
+            if (_presetsPage != null || _modPage != null) return;
+
+            // 预设页容器（原版预设 Tab）
+            var presetsTab = menu.transform.Find("PresetsTab")
+                ?? FindChildRecursive(menu.transform, "PresetsTab");
+            if (presetsTab == null)
+            {
+                var gpt = menu.GetComponentInChildren<GamePresetsTab>(true);
+                if (gpt != null) presetsTab = gpt.transform;
+            }
+            if (presetsTab != null)
+                _presetsPage = BuildPresetsPage(presetsTab);
+            else
+                LightLogger.LogWarning("[GameSettingMenuPatch] 未找到预设页容器");
+
+            // MOD 设置页容器（原版职业设置 Tab）
+            var rolesTab = menu.transform.Find("RoleSettingsTab")
+                ?? FindChildRecursive(menu.transform, "RoleSettingsTab");
+            if (rolesTab == null)
+            {
+                var rsm = menu.GetComponentInChildren<RolesSettingsMenu>(true);
+                if (rsm != null) rolesTab = rsm.transform;
+            }
+            if (rolesTab != null)
+                _modPage = BuildModPage(rolesTab);
+            else
+                LightLogger.LogWarning("[GameSettingMenuPatch] 未找到 MOD 设置页容器");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.BuildPages]", ex);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    //  预设页：4 按钮框架
+    // ---------------------------------------------------------------------
+
+    private static GameObject BuildPresetsPage(Transform parent)
+    {
+        var page = NewUIObject("LightPresetsPage", parent, new Vector3(0f, 0.1f, -2.5f));
+
+        for (int i = 0; i < PresetLabels.Length; i++)
+        {
+            int row = i / 2;
+            int col = i % 2;
+            var pos = new Vector2((col - 0.5f) * PresetSpacingX, (0.5f - row) * PresetSpacingY);
+            CreatePresetButton(page.transform, PresetLabels[i], pos);
+        }
+
+        return page;
+    }
+
+    /// <summary>
+    /// 预设页按钮：图片槽位（默认/悬停双图，资源未提供先空着）+ 下方文字；
+    /// hover 时若有悬停图则切换（null 安全）；点击本轮无效果。
+    /// </summary>
+    private static void CreatePresetButton(Transform parent, string label, Vector2 pos)
+    {
+        var go = NewUIObject($"LightPresetButton_{label}", parent, new Vector3(pos.x, pos.y, 0f));
+
+        // 图片槽位（空图时给一块暗色底，便于看到按钮范围）
+        var img = NewUIObject("Image", go.transform, new Vector3(0f, 0f, 0f));
+        var imgSr = img.AddComponent<SpriteRenderer>();
+        imgSr.sprite = _presetImageNormal;                       // 资源未提供 → null
+        imgSr.drawMode = SpriteDrawMode.Sliced;
+        imgSr.size = new Vector2(PresetWidth, PresetHeight);
+        imgSr.color = _presetImageNormal != null
+            ? UColor.white
+            : new UColor(0.15f, 0.15f, 0.15f, 0.8f);
+
+        // 下方文字
+        CloneText(go.transform, new Vector3(0f, -PresetHeight * 0.5f - 0.2f, -0.1f), label, 1.1f);
+
+        // 点击区域 + PassiveButton
+        AddButtonArea(go, PresetWidth, PresetHeight);
+
+        var pb = go.SetUpButton(true, null, null, null, false);
+        pb.OnClick.AddListener((UnityAction)(() => { /* 本轮无效果 */ }));
+        pb.OnMouseOver.AddListener((UnityAction)(() =>
+        {
+            if (_presetImageHover != null) imgSr.sprite = _presetImageHover;
+        }));
+        pb.OnMouseOut.AddListener((UnityAction)(() =>
+        {
+            if (_presetImageNormal != null) imgSr.sprite = _presetImageNormal;
+        }));
+    }
+
+    // ---------------------------------------------------------------------
+    //  MOD 设置页：6 彩色边框标签框架
+    // ---------------------------------------------------------------------
+
+    private static GameObject BuildModPage(Transform parent)
+    {
+        var page = NewUIObject("LightModSettingsPage", parent, new Vector3(0f, 1.2f, -2.5f));
+
+        for (int i = 0; i < ModTabs.Length; i++)
+        {
+            int idx = i;
+            CreateTabButton(page.transform, ModTabs[i].Key, ModTabs[i].BorderColor,
+                new Vector2((i - 2.5f) * TabSpacing, 0.8f),
+                (UnityAction)(() => OnModTabClicked(idx)));
+        }
+
+        // 占位提示（点击标签后显示「XX页签暂未实现。」）
+        _modPlaceholderText = CloneText(page.transform, new Vector3(0f, -0.8f, -0.1f), "", 1.5f);
+
+        return page;
+    }
+
+    /// <summary>
+    /// 彩色边框标签：边框 = 4 条代码色块（白 sprite tint 成边框色），中间留空放图标槽位。
+    /// 标签上不显示文字；hover 换图标（资源未提供时不处理）。
+    /// </summary>
+    private static void CreateTabButton(Transform parent, string key, UColor borderColor,
+        Vector2 pos, UnityAction onClick)
+    {
+        var go = NewUIObject($"LightModTab_{key}", parent, new Vector3(pos.x, pos.y, 0f));
+
+        float halfW = TabWidth * 0.5f;
+        float halfH = TabHeight * 0.5f;
+        float t = TabBorderThickness;
+
+        // 上下左右四条边框
+        MakeRect(go.transform, "Top", TabWidth, t, 0f, halfH - t * 0.5f, borderColor);
+        MakeRect(go.transform, "Bottom", TabWidth, t, 0f, -halfH + t * 0.5f, borderColor);
+        MakeRect(go.transform, "Left", t, TabHeight - t * 2f, -halfW + t * 0.5f, 0f, borderColor);
+        MakeRect(go.transform, "Right", t, TabHeight - t * 2f, halfW - t * 0.5f, 0f, borderColor);
+
+        // 中间留空：图标槽位（图片未画好，null 安全）
+        var icon = NewUIObject("IconSlot", go.transform, Vector3.zero);
+        var iconSr = icon.AddComponent<SpriteRenderer>();
+        iconSr.sprite = _tabIconNormal;                          // 资源未提供 → null
+        iconSr.drawMode = SpriteDrawMode.Sliced;
+        iconSr.size = new Vector2(IconSize, IconSize);
+
+        // 点击区域 + PassiveButton
+        AddButtonArea(go, TabWidth, TabHeight);
+
+        var pb = go.SetUpButton(true, null, null, null, false);
+        pb.OnClick.AddListener(onClick);
+        pb.OnMouseOver.AddListener((UnityAction)(() =>
+        {
+            if (_tabIconHover != null) iconSr.sprite = _tabIconHover;
+        }));
+        pb.OnMouseOut.AddListener((UnityAction)(() =>
+        {
+            if (_tabIconNormal != null) iconSr.sprite = _tabIconNormal;
+        }));
+    }
+
+    private static void OnModTabClicked(int index)
+    {
+        try
+        {
+            if (_modPlaceholderText == null) return;
+            _modPlaceholderText.text = $"{ModTabs[index].Cn}页签暂未实现。";
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[GameSettingMenuPatch.OnModTabClicked]", ex);
+        }
+    }
+
+    // =====================================================================
+    //  UI 工具
+    // =====================================================================
+
+    private static GameObject NewUIObject(string name, Transform parent, Vector3 localPos)
+    {
+        var go = new GameObject(name);
+        go.layer = LayerExpansion.GetUILayer();
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = localPos;
+        go.transform.localScale = Vector3.one;
+        return go;
+    }
+
+    /// <summary>用白 sprite（Sliced）画一块纯色矩形（边框用）。</summary>
+    private static void MakeRect(Transform parent, string name, float width, float height,
+        float x, float y, UColor color)
+    {
+        var go = NewUIObject(name, parent, new Vector3(x, y, 0f));
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = VanillaAsset.WhiteSprite;                    // null 安全
+        sr.drawMode = SpriteDrawMode.Sliced;
+        sr.tileMode = SpriteTileMode.Continuous;
+        sr.size = new Vector2(width, height);
+        sr.color = color;
+    }
+
+    /// <summary>给按钮对象加点击/悬浮检测用的碰撞体（PassiveButton 依赖 Collider2D）。</summary>
+    private static void AddButtonArea(GameObject go, float width, float height)
+    {
+        var col = go.AddComponent<BoxCollider2D>();
+        col.isTrigger = true;
+        col.offset = Vector2.zero;
+        col.size = new Vector2(width, height);
+    }
+
+    /// <summary>克隆原版标准文本预制体（带字体）；预制体不可用时返回 null，不崩。</summary>
+    private static TextMeshPro? CloneText(Transform parent, Vector3 pos, string text, float fontSize)
+    {
+        var prefab = VanillaAsset.GetStandardTextPrefab();
+        if (prefab == null) return null;
+
+        var tmp = Object.Instantiate(prefab, parent);
+        tmp.transform.localPosition = pos;
+        tmp.fontSize = fontSize;
+        tmp.color = UColor.white;
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.enableWordWrapping = false;
+        tmp.raycastTarget = false;
+        tmp.text = text;
+        tmp.ForceMeshUpdate();
+        return tmp;
+    }
+
+    // =====================================================================
+    //  原版对象查找/文本工具
+    // =====================================================================
 
     private static Transform? FindChildRecursive(Transform parent, string name)
     {
@@ -48,20 +457,6 @@ public static class GameSettingMenuPatch
         }
     }
 
-    private static PassiveButton? FindButtonByName(GameSettingMenu menu, params string[] names)
-    {
-        foreach (var n in names)
-        {
-            var t = FindChildRecursive(menu.transform, n);
-            if (t != null)
-            {
-                var pb = t.GetComponent<PassiveButton>();
-                if (pb != null) return pb;
-            }
-        }
-        return null;
-    }
-
     private static PassiveButton? FindButtonByText(GameSettingMenu menu, string keyword)
     {
         try
@@ -70,7 +465,7 @@ public static class GameSettingMenuPatch
             foreach (var pb in btns)
             {
                 if (pb == null) continue;
-                string text = GetButtonText(pb);
+                var text = GetButtonText(pb);
                 if (!string.IsNullOrEmpty(text) && text.Contains(keyword)) return pb;
             }
         }
@@ -96,233 +491,6 @@ public static class GameSettingMenuPatch
         catch { return ""; }
     }
 
-    [HarmonyPatch(typeof(GameSettingMenu), "Start")]
-    [HarmonyPostfix]
-    public static void StartPostfix(GameSettingMenu __instance)
-    {
-        try
-        {
-            EnsureMask(__instance);
-            SetupTabs(__instance);
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.StartPostfix]", ex);
-        }
-    }
-
-    [HarmonyPatch(typeof(GameSettingMenu), "Close")]
-    [HarmonyPostfix]
-    public static void ClosePostfix()
-    {
-        ModSettingsScreen.Close();
-        _modPage = null;
-        for (int i = 0; i < _tabButtons.Length; i++) _tabButtons[i] = null;
-        _activeTab = -1;
-        _mask = null;
-    }
-
-    /// <summary>最底层半透明遮罩：遮住层级混乱的背景，只让设置 UI 在上面。</summary>
-    private static void EnsureMask(GameSettingMenu menu)
-    {
-        try
-        {
-            if (_mask != null) return;
-            var maskObj = new GameObject("LightMask");
-            maskObj.layer = LayerExpansion.GetUILayer();
-            maskObj.transform.SetParent(menu.transform, false);
-            maskObj.transform.localPosition = new Vector3(0f, 0f, -30f);
-            var sr = maskObj.AddComponent<SpriteRenderer>();
-            sr.sprite = Light.UI.Window.VanillaAsset.FullScreenSprite;
-            sr.drawMode = SpriteDrawMode.Sliced;
-            sr.size = new Vector2(30f, 30f);
-            sr.color = new UnityEngine.Color(0f, 0f, 0f, 0.35f);
-            _mask = maskObj;
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.EnsureMask]", ex);
-        }
-    }
-
-    private static void SetupTabs(GameSettingMenu menu)
-    {
-        try
-        {
-            var settingsBtn = FindButtonByName(menu, "GameSettingsButton", "GameSettings", "SettingsButton")
-                ?? FindButtonByText(menu, "游戏设置") ?? FindButtonByText(menu, "Game Setting");
-            var presetsBtn = FindButtonByName(menu, "GamePresetsButton", "GamePresets", "PresetsButton")
-                ?? FindButtonByText(menu, "预设") ?? FindButtonByText(menu, "Preset");
-            var rolesBtn = FindButtonByName(menu, "RoleSettingsButton", "RolesSettingsButton", "RolesButton", "RoleSettings")
-                ?? FindButtonByText(menu, "角色设置") ?? FindButtonByText(menu, "Role Setting");
-
-            LightLogger.Log($"[GameSettingMenuPatch] 找到选项卡: settings={(settingsBtn != null ? settingsBtn.gameObject.name : "null")} " +
-                $"presets={(presetsBtn != null ? presetsBtn.gameObject.name : "null")} roles={(rolesBtn != null ? rolesBtn.gameObject.name : "null")}");
-
-            // 删除原版按钮（隐藏），克隆三份替换
-            foreach (var b in new[] { settingsBtn, presetsBtn, rolesBtn })
-                if (b != null) b.gameObject.SetActive(false);
-
-            for (int i = 0; i < 3; i++)
-            {
-                var old = FindChildRecursive(menu.transform, $"LightTab{i}");
-                if (old != null) Object.Destroy(old.gameObject);
-                _tabButtons[i] = null;
-            }
-
-            var template = rolesBtn ?? settingsBtn ?? presetsBtn;
-            if (template == null)
-            {
-                LightLogger.LogWarning("[GameSettingMenuPatch] 未找到任何原版选项卡按钮，跳过增强");
-                return;
-            }
-
-            var parent = template.transform.parent;
-            var baseAnchor = new Vector2(0.5f, 0.86f);
-            var aspT = template.GetComponent<AspectPosition>();
-            if (aspT != null) baseAnchor = aspT.anchorPoint;
-
-            var labels = new[]
-            {
-                Language.Translate("gss.tab.vanilla", "原版设置"),
-                Language.Translate("gss.tab.mod", "MOD设置"),
-                Language.Translate("gss.tab.preset", "预设"),
-            };
-
-            var scalerList = Object.FindObjectOfType<SlicedAspectScaler>();
-            for (int i = 0; i < 3; i++)
-            {
-                var clone = Object.Instantiate(template.gameObject, parent);
-                clone.name = $"LightTab{i}";
-                clone.SetActive(true);
-                var cond = clone.GetComponent<ConditionalHide>();
-                if (cond != null) Object.Destroy(cond);
-                // 顶部排开：x 三等分，y 保持原版选项卡行
-                var asp = clone.GetComponent<AspectPosition>();
-                if (asp != null)
-                {
-                    asp.anchorPoint = new Vector2(0.34f + i * 0.16f, baseAnchor.y);
-                    asp.AdjustPosition();
-                }
-                var pb = clone.GetComponent<PassiveButton>();
-                if (pb == null) continue;
-                SetButtonText(pb, labels[i]);
-                pb.OnClick = new UnityEngine.UI.Button.ButtonClickedEvent();
-                int idx = i;
-                pb.OnClick.AddListener((UnityAction)(() => SelectTab(menu, idx)));
-                _tabButtons[i] = pb;
-                if (scalerList != null)
-                {
-                    var scaled = clone.GetComponent<AspectScaledAsset>();
-                    if (scaled != null) scalerList.objectsToScale.Add(scaled);
-                }
-            }
-
-            SelectTab(menu, 0);
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.SetupTabs]", ex);
-        }
-    }
-
-    /// <summary>切换选项卡：高亮当前 + 切换内容。</summary>
-    private static void SelectTab(GameSettingMenu menu, int index)
-    {
-        try
-        {
-            _activeTab = index;
-            for (int i = 0; i < _tabButtons.Length; i++)
-            {
-                var b = _tabButtons[i];
-                if (b != null) b.SelectButton(i == index);
-            }
-            switch (index)
-            {
-                case 0: HideModPage(); menu.ChangeTab(1, false); break;
-                case 1: ShowModPage(menu); break;
-                default: HideModPage(); menu.ChangeTab(0, false); break;
-            }
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.SelectTab]", ex);
-        }
-    }
-
-    private static void HideVanillaTabs(GameSettingMenu menu)
-    {
-        foreach (var n in new[] { "PresetsTab", "GameSettingsTab", "RoleSettingsTab", "GamePresetsTab", "GameSettings" })
-        {
-            var t = FindChildRecursive(menu.transform, n);
-            if (t != null) t.gameObject.SetActive(false);
-        }
-    }
-
-    private static void ShowModPage(GameSettingMenu menu)
-    {
-        try
-        {
-            if (_modPage == null) BuildModPage(menu);
-            if (_modPage == null) return;
-            HideVanillaTabs(menu);
-            _modPage.SetActive(true);
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.ShowModPage]", ex);
-        }
-    }
-
-    private static void HideModPage()
-    {
-        try
-        {
-            if (_modPage != null)
-            {
-                try { _modPage.SetActive(false); } catch { _modPage = null; }
-            }
-        }
-        catch { }
-    }
-
-    /// <summary>克隆原版"游戏设置"内容页（含原版滚动容器），清空后内嵌 MOD 配置 UI。</summary>
-    private static void BuildModPage(GameSettingMenu menu)
-    {
-        try
-        {
-            var gom = menu.GetComponentInChildren<GameOptionsMenu>(true);
-            if (gom == null)
-            {
-                LightLogger.LogWarning("[GameSettingMenuPatch] 未找到 GameOptionsMenu，无法克隆设置页");
-                return;
-            }
-
-            var sliderInner = gom.gameObject;
-            _modPage = Object.Instantiate(sliderInner, sliderInner.transform.parent);
-            _modPage.name = "LightModSettings";
-            _modPage.transform.localPosition = sliderInner.transform.localPosition;
-
-            // 清空子对象（保留原版滚动条）
-            for (int i = _modPage.transform.childCount - 1; i >= 0; i--)
-            {
-                var child = _modPage.transform.GetChild(i);
-                if (child.GetComponent<Scroller>() != null) continue;
-                Object.Destroy(child.gameObject);
-            }
-
-            var clonedGom = _modPage.GetComponent<GameOptionsMenu>();
-            if (clonedGom != null) clonedGom.enabled = false;
-
-            _modPage.SetActive(false);
-            ModSettingsScreen.Open(_modPage.transform);
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[GameSettingMenuPatch.BuildModPage]", ex);
-        }
-    }
-
     private static void SetButtonText(PassiveButton? btn, string text)
     {
         try
@@ -334,13 +502,13 @@ public static class GameSettingMenuPatch
                 tmp = fp.GetChild(0).GetComponent<TextMeshPro>();
             if (tmp == null)
                 tmp = btn.GetComponentInChildren<TextMeshPro>(true);
-            if (tmp != null)
-            {
-                tmp.text = text;
-                var trs = btn.GetComponentsInChildren<TextTranslatorTMP>(true);
-                foreach (var tr in trs)
-                    if (tr != null) tr.enabled = false;
-            }
+            if (tmp == null) return;
+
+            tmp.text = text;
+            // 关掉原版翻译组件，否则会被本地化文本覆盖
+            var translators = btn.GetComponentsInChildren<TextTranslatorTMP>(true);
+            foreach (var tr in translators)
+                if (tr != null) tr.enabled = false;
         }
         catch (Exception ex)
         {

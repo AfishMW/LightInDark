@@ -163,63 +163,6 @@ namespace LightInDark.Events
     }
 
     // =====================================================================
-    //  任务
-    // =====================================================================
-
-    [HarmonyPatch(typeof(NormalPlayerTask), nameof(NormalPlayerTask.Initialize))]
-    public static class TaskInitializePatch
-    {
-        public static void Postfix(NormalPlayerTask __instance)
-        {
-            try
-            {
-                if (__instance.Owner == null) return;
-                EventTriggers.OnPlayerGetTask(__instance.Owner, __instance);
-            }
-            catch (Exception ex) { LightLogger.LogError("[EventPatch] TaskInitializePatch", ex); }
-        }
-    }
-
-    [HarmonyPatch(typeof(PlayerTask), nameof(PlayerTask.Complete))]
-    public static class TaskCompleteUpdatePatch
-    {
-        public static void Postfix(PlayerTask __instance)
-        {
-            try
-            {
-                if (__instance.Owner == null) return;
-                EventTriggers.OnTaskUpdate(__instance.Owner);
-
-                int completed = 0, total = 0;
-                if (__instance.Owner.Data?.Tasks != null)
-                {
-                    total = __instance.Owner.Data.Tasks.Count;
-                    foreach (var t in __instance.Owner.Data.Tasks)
-                        if (t != null && t.Complete) completed++;
-                }
-                if (total > 0 && completed >= total)
-                    EventTriggers.OnAllTasksComplete(__instance.Owner);
-            }
-            catch (Exception ex) { LightLogger.LogError("[EventPatch] TaskCompleteUpdatePatch", ex); }
-        }
-    }
-
-    [HarmonyPatch(typeof(PlayerTask), nameof(PlayerTask.OnRemove))]
-    public static class PlayerTaskRemovePatch
-    {
-        public static void Postfix(PlayerTask __instance)
-        {
-            try
-            {
-                var owner = __instance.Owner;
-                if (owner == null) return;
-                EventTriggers.OnPlayerTaskRemove(owner, __instance);
-            }
-            catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerTaskRemovePatch", ex); }
-        }
-    }
-
-    // =====================================================================
     //  会议
     // =====================================================================
 

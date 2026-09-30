@@ -1,7 +1,6 @@
 using HarmonyLib;
 using InnerNet;
 using LightInDark.Utilities;
-using static LightInDark.Utilities.LightUtils;
 
 namespace LightInDark.Patches;
 
@@ -12,7 +11,7 @@ public static class DisconnectInternalPatch
     {
         if (reason == DisconnectReasons.Kicked)
         {
-            string pendingReason = LightInDark.Utilities.KickHelper.ConsumePendingReason(__instance.ClientId);
+            string pendingReason = KickHelper.ConsumePendingReason(__instance.ClientId);
             if (!string.IsNullOrEmpty(pendingReason))
             {
                 __instance.LastCustomDisconnect = pendingReason;

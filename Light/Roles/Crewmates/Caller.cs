@@ -29,8 +29,7 @@ public class Caller : Role
     /// <summary>分配参数：每局必出 1 名 Caller（MaxCount/Chance 可由 .cfg 覆盖）。</summary>
     public override AllocationParameters Allocation => new() { MaxCount = 1, GuaranteedCount = 1, Chance = 100 };
 
-    /// <summary>技能冷却（秒）。[RoleOption] 自动注册进配置并写回此属性。</summary>
-    [RoleOption("Cooldown", 20f, 0f, 120f, "技能冷却")]
+    /// <summary>技能冷却（秒）。配置系统已删，直接使用代码默认值。</summary>
     public static float Cooldown { get; set; } = 20f;
 
     protected override void OnActivated()

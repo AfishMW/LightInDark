@@ -1,8 +1,7 @@
 global using HarmonyLib;
 global using System.Collections;
 global using UnityEngine;
-global using Light.Utilities; 
-using Light.Configuration;
+global using Light.Utilities;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
@@ -17,7 +16,7 @@ using Light.Roles.Vanilla;
 using LightInDark.Core;
 using System;
 using UnityEngine.SceneManagement;
-using Light.Components;
+using Light.Config;
 
 namespace Light;
 
@@ -61,7 +60,6 @@ public partial class LightPlugin : BasePlugin
             LidRpcRegistry.ScanAndPatch(Harmony);
             ColorData = MainColor.LoadChatColor();
             LoadRole();
-            PresetManager.ApplyCurrentPreset();
             Dispatcher.Initialize();
 #if !DEBUG
             LightLogger.ClearLog();
@@ -108,7 +106,7 @@ public partial class LightPlugin : BasePlugin
     {
         try
         {
-            UI.Cursor.Initialize();
+            Light.Config.Cursor.Initialize();
         }
         catch (Exception ex)
         {
@@ -160,7 +158,6 @@ public partial class LightPlugin : BasePlugin
     {
         try
         {
-            LightInDark.Configuration.RoleConfig.Initialize(Config);
             RoleRegistry.Register<Caller>();
             RoleRegistry.Register(VanillaImpostor.Instance);
             RoleRegistry.Register(VanillaCrewmate.Instance);

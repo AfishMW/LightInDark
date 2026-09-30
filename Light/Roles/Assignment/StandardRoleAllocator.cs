@@ -14,6 +14,11 @@ public class StandardRoleAllocator : IRoleAllocator
 {
     private static readonly System.Random Rng = new();
 
+    // 各类别自定义职业分配数量上限（配置系统删除后的临时硬编码默认值）
+    private const int MaxImpostorRoles = 2;
+    private const int MaxNeutralRoles = 1;
+    private const int MaxCrewmateRoles = 2;
+
     public void Assign(List<byte> impostors, List<byte> others)
     {
         try
@@ -21,12 +26,12 @@ public class StandardRoleAllocator : IRoleAllocator
             var table = new RoleTable();
 
             // 内鬼 → 中立 → 船员，依次抽选自定义职业
-            Roll(table, impostors, BuildPool(RoleCategory.Impostor), GameConfig.MaxImpostorRoles);
-            Roll(table, others, BuildPool(RoleCategory.Neutral), GameConfig.MaxNeutralRoles);
+            Roll(table, impostors, BuildPool(RoleCategory.Impostor), MaxImpostorRoles);
+            Roll(table, others, BuildPool(RoleCategory.Neutral), MaxNeutralRoles);
 
             var neutralIds = table.GetPlayers(RoleCategory.Neutral).Select(p => p.PlayerId).ToHashSet();
             var crew = others.Where(p => !neutralIds.Contains(p)).ToList();
-            Roll(table, crew, BuildPool(RoleCategory.Crewmate), GameConfig.MaxCrewmateRoles);
+            Roll(table, crew, BuildPool(RoleCategory.Crewmate), MaxCrewmateRoles);
 
             // 兜底：未分配到自定义职业的玩家由原版 SelectRoles 处理
             // 不再强制分配 VanillaImpostor/VanillaCrewmate
@@ -100,11 +105,11 @@ public class StandardRoleAllocator : IRoleAllocator
         }
     }
 
-    /// <summary>读取职业最大数量（配置优先，回退到代码 Allocation 默认）。</summary>
+    /// <summary>读取职业最大数量（配置系统已删，直接使用代码 Allocation 默认）。</summary>
     public static int GetMaxCount(Role role)
-        => RoleConfig.GetRoleCount(role.CodeName, role.Allocation.MaxCount);
+        => role.Allocation.MaxCount;
 
-    /// <summary>读取职业分配概率（配置优先，回退到代码 Allocation 默认）。</summary>
+    /// <summary>读取职业分配概率（配置系统已删，直接使用代码 Allocation 默认）。</summary>
     public static int GetChance(Role role)
-        => RoleConfig.GetRoleChance(role.CodeName, role.Allocation.Chance);
+        => role.Allocation.Chance;
 }

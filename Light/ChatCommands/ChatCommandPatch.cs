@@ -226,11 +226,11 @@ public class PatchManager
                                 string subInxStr = parts[2];
                                 if(int.TryParse(subInxStr,out int subInx))
                                 {
-                                    if (UI.Cursor.ChangeCursorFromIndex(subInx) == true)
+                                    if (Config.Cursor.ChangeCursorFromIndex(subInx) == true)
                                     {
                                         SendLocalMessage($"更换成功！已将光标更换为索引{subInx}");
                                     }
-                                    else if(UI.Cursor.ChangeCursorFromIndex(subInx) == null)
+                                    else if(Config.Cursor.ChangeCursorFromIndex(subInx) == null)
                                     {
                                         SendLocalMessage($"更换失败！请将根目录下Light.log发送给开发者！");
                                     }

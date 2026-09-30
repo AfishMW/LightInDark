@@ -54,8 +54,6 @@ namespace LightInDark.Roles
                 _rolesByType[typeof(T)] = role;
                 _rolesById[role.Id] = role;
 
-                // 自动注册该职业的配置项（[RoleOption] 扫描 + 默认 MaxCount/Chance）
-                RoleConfig.RegisterRole(role);
                 return role;
             }
             catch (Exception ex)

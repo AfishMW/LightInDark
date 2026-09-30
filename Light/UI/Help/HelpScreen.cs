@@ -676,13 +676,13 @@ public static class HelpScreen
     };
 
     /// <summary>分配信息行（MaxCount==0 显示不参与分配）</summary>
-    /// <summary>分配信息行（读取 RoleConfig 注册表当前值：最大数量/生成概率，MaxCount==0 显示不参与分配）。</summary>
+    /// <summary>分配信息行（MaxCount==0 显示不参与分配）。</summary>
     private static string GetAllocationLine(Role role)
     {
         try
         {
-            int maxCount = RoleConfig.GetRoleCount(role.CodeName, role.Allocation.MaxCount);
-            int chance = RoleConfig.GetRoleChance(role.CodeName, role.Allocation.Chance);
+            int maxCount = role.Allocation.MaxCount;
+            int chance = role.Allocation.Chance;
             int guaranteed = role.Allocation.GuaranteedCount;
 
             if (maxCount <= 0)

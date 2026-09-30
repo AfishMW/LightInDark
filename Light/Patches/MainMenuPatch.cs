@@ -2,7 +2,7 @@ using AmongUs.Data;
 using BepInEx.Unity.IL2CPP;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
-using Light.Components;
+using Light.Config;
 using Light.UI;
 using Light.UI.Help;
 using Light.UI.Window;
@@ -85,7 +85,7 @@ public static class MainMenuPatch
         int pluginCount = IL2CPPChainloader.Instance.Plugins.Count;
         if(pluginCount != 2)
         {
-            LightUtils.ShowCustomDisconnectWindow(Language.Translate("mainmenu.plugincount.ex"));
+            LightUtils.ShowCustomDisconnectWindow("<b><color=red>警告</color></b><br>检测到<b>超过 2 </b>的Plugin数!<br>LID本身与绝大多数模组不兼容，除非你安装的模组特殊说明！");
         }
         return;
     }

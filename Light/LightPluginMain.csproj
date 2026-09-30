@@ -24,9 +24,12 @@
 		<DefineConstants>$(DefineConstants);ANDROID</DefineConstants>
 	</PropertyGroup>
     <ItemGroup>
+      <Folder Include="Components\" />
       <Folder Include="Systems\" />
     </ItemGroup>
-
+	<ItemGroup>
+		<ProjectReference Include="..\LightAPI\LightInDark.csproj" />
+	</ItemGroup>
     <Target Name="AddGameReferences" BeforeTargets="ResolveAssemblyReferences">
         <ItemGroup>
             <_LibDlls Include="..\Libs\*.dll" Exclude="..\Libs\netstandard.dll" />
