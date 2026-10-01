@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "title": "示例公告",
+    "shortTitle": "示例短标题",
+    "subTitle": "副标题",
+    "date": "2026-09-30",
+    "detail": "第一行<br>第二行<br><color=#FFB7DD>粉色字</color><br>[https://github.com/AfishMW/LightInDark]我们的仓库[]",
+    "debug": false
+  },
+  {
+    "id": 2,
+    "title": "示例二",
+    "shortTitle": "短标题",
+    "subTitle": "111",
+    "date": "2026-10-01",
+    "detail": "滚木。",
+    "debug": false
+  }
+]

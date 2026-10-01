@@ -382,6 +382,7 @@ LightAPI/mem-log/
 AGENTS.md
 参考代码索引.md
 UI设计稿记录.md
+新闻系统移植研究报告.md
 
 # VerificationServer 生成物（构建输出、发布目录、密钥与 zip 包）
 VerificationServer/bin/

@@ -25,6 +25,7 @@
 	</PropertyGroup>
     <ItemGroup>
       <Folder Include="Components\" />
+      <Folder Include="Resources\News\" />
       <Folder Include="Systems\" />
     </ItemGroup>
 	<ItemGroup>

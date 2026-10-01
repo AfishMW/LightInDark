@@ -21,6 +21,7 @@ public static class Cursor
         try
         {
             SetCursorIndex(DefaultCursorIndex);
+            
         }
         catch (Exception ex)
         {

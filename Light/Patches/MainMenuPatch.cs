@@ -227,6 +227,9 @@ public static class MainMenuPatch
             SetupExtraButtons(__instance);
             ApplyButtonEffects(__instance);
             SetupRightPanel(__instance);
+#if !DEBUG
+            RemoveFreePlayAndCenterHowToPlay(__instance);   // Release：去掉练习模式，玩法说明居中
+#endif
             SetupLightScreen(__instance);
             SetupSubScreen(__instance);
             SetupGalleryScreen(__instance);
@@ -497,6 +500,118 @@ public static class MainMenuPatch
             LightLogger.LogError("[MainMenuPatch.SetupRightPanel]", ex);
         }
     }
+
+#if !DEBUG
+    /// <summary>
+    /// Release 构建专用：「练习模式」(FreePlay) 与「玩法说明」(HowToPlay) 原本左右并列，
+    /// 这里把练习模式整个去掉，并把玩法说明挪到两者原来的中点，保持居中。
+    /// （Debug 构建保留原样，方便开发时用练习模式。）
+    /// </summary>
+    private static void RemoveFreePlayAndCenterHowToPlay(MainMenuManager __instance)
+    {
+        try
+        {
+            var free = __instance.freePlayButton;
+            var how = __instance.howToPlayButton;
+
+            if (how == null)
+            {
+                LightLogger.LogWarning("[MainMenuPatch] 找不到 howToPlayButton，跳过 Release 布局调整");
+                return;
+            }
+
+            // 先算中点（必须趁 freePlay 还没被隐藏时取它的位置）
+            var howPos = how.transform.localPosition;
+            float centerX = howPos.x;
+            if (free != null && free.transform.parent == how.transform.parent)
+            {
+                centerX = (howPos.x + free.transform.localPosition.x) * 0.5f;
+            }
+
+            // 去掉练习模式按钮（连带它的弹窗，避免残留）
+            if (free != null)
+            {
+                free.gameObject.SetActive(false);
+                LightLogger.Log("[MainMenuPatch] Release：已移除练习模式按钮");
+            }
+            var popover = FindGO("FreeplayPopover");
+            if (popover != null) popover.SetActive(false);
+
+            // 原版 OpenGameModeMenu() 是 gameModeButtons.SetActive(true)，打开面板时子物体的 OnEnable 会跑，
+            // AspectPosition 会趁机按锚点把位置摆回去 —— 所以按钮自身若挂了 AspectPosition 先禁用，
+            // 面板打开后再由 OpenGameModeMenu_Postfix 纠正一次。
+            var asp = how.GetComponent<AspectPosition>();
+            if (asp != null) asp.enabled = false;
+
+            _howToPlayBtn = how;
+            _howToPlayTargetX = centerX;
+
+            how.transform.localPosition = new Vector3(centerX, howPos.y, howPos.z);
+            // 关键：呼吸效果（ButtonBreathEffect）每帧都会把 localPosition 写回它记下的 BasePos，
+            // 不刷新基准位置的话，这里改完下一帧就被摆回原地 —— 看起来就是"完全没动"。
+            ButtonBreathEffect.RebasePosition(how.gameObject);
+            LightLogger.Log($"[MainMenuPatch] Release：玩法说明已居中，x={centerX:F2}（原 x={howPos.x:F2}）父物体={how.transform.parent?.name}");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.RemoveFreePlayAndCenterHowToPlay]", ex);
+        }
+    }
+
+    private static PassiveButton? _howToPlayBtn;
+    private static float _howToPlayTargetX;
+    private static int _howToPlayFixLogs;
+
+    /// <summary>
+    /// 面板每次打开都会跑一遍子物体 OnEnable，AspectPosition 会趁机把位置摆回锚点，
+    /// 所以打开面板后立刻再纠正一次。
+    /// </summary>
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenGameModeMenu))]
+    [HarmonyPostfix]
+    public static void OpenGameModeMenu_Postfix()
+    {
+        EnforceHowToPlayX("面板打开");
+    }
+
+    /// <summary>兜底：面板开着时每帧盯一次位置，真有东西反复改也能压住。</summary>
+    [HarmonyPatch(typeof(MainMenuManager), "LateUpdate")]
+    [HarmonyPostfix]
+    public static void HowToPlayLateUpdate_Postfix()
+    {
+        if (_howToPlayBtn == null) return;
+        try
+        {
+            if (!_howToPlayBtn.gameObject.activeInHierarchy) return;
+        }
+        catch { return; }
+
+        EnforceHowToPlayX("每帧");
+    }
+
+    /// <summary>把玩法说明拉回中间；只有真的被改动时才写日志（最多 5 条，避免刷屏）。</summary>
+    private static void EnforceHowToPlayX(string when)
+    {
+        try
+        {
+            if (_howToPlayBtn == null) return;
+
+            var t = _howToPlayBtn.transform;
+            var p = t.localPosition;
+            if (Mathf.Abs(p.x - _howToPlayTargetX) < 0.001f) return;
+
+            t.localPosition = new Vector3(_howToPlayTargetX, p.y, p.z);
+            if (_howToPlayFixLogs < 5)
+            {
+                _howToPlayFixLogs++;
+                LightLogger.Log($"[MainMenuPatch] Release：玩法说明位置被改回({when})，已重新居中 x={_howToPlayTargetX:F2}（当时 x={p.x:F2}）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[MainMenuPatch] EnforceHowToPlayX: {ex.Message}");
+        }
+    }
+#endif
 
     private static void SetupLightScreen(MainMenuManager __instance)
     {

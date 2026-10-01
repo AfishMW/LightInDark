@@ -1,22 +1,23 @@
 global using HarmonyLib;
+global using Light.Utilities;
 global using System.Collections;
 global using UnityEngine;
-global using Light.Utilities;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
-using LightInDark.Events;
-using LightInDark.Language;
-using LightInDark.Roles;
-using LightInDark.RPCs;
 using Light.ChatCommands;
+using Light.Config;
+using Light.News;
 using Light.Patches;
 using Light.Roles.Crewmates;
 using Light.Roles.Vanilla;
 using LightInDark.Core;
+using LightInDark.Events;
+using LightInDark.Language;
+using LightInDark.Roles;
+using LightInDark.RPCs;
 using System;
 using UnityEngine.SceneManagement;
-using Light.Config;
 
 namespace Light;
 
@@ -71,7 +72,7 @@ public partial class LightPlugin : BasePlugin
             // [已禁用-握手系统] 先确保模组可玩性，握手验证暂停（2026-09-26）。
             // 恢复时取消注释下一行，并同步服务器 official.json 的 hash。
             // Handshake.HandshakeManager.Initialize();
-            
+            NewsManager.LoadNews();
             Log.LogInfo($"模组 {Name} v{Version} 已加载！");
         }
         catch (Exception ex)

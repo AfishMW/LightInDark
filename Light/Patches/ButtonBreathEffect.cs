@@ -81,6 +81,21 @@ public static class ButtonBreathEffect
         Init();
     }
 
+    /// <summary>
+    /// 把某个按钮的基准位置刷新为它【当前】的位置。
+    /// 移动过按钮之后必须调用 —— 否则 Update() 每帧都会用旧的 BasePos 把 localPosition 写回去,
+    /// 表现就是"移了等于没移"(改完下一帧又被摆回原地)。
+    /// </summary>
+    public static void RebasePosition(GameObject go)
+    {
+        try
+        {
+            if (go != null && _states.TryGetValue(go, out var state) && state != null)
+                state.BasePos = go.transform.localPosition;
+        }
+        catch { }
+    }
+
     private static void Register(PassiveButton pb)
     {
         try

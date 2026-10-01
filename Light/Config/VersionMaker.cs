@@ -18,9 +18,35 @@ public class VersionMaker
     {
         try
         {
+            string path = Path.Combine(Paths.PluginPath, "version.json");
+
+            #region 新增：写入前检测版本变化（更新后用于自动弹新闻）
+            JustUpdated = false;
+            _updatedConsumed = false;
+            try
+            {
+                if (File.Exists(path))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                    if (doc.RootElement.TryGetProperty("Light", out var oldProp))
+                    {
+                        string? oldVer = oldProp.GetString();
+                        if (!string.IsNullOrEmpty(oldVer) && IsNewerVersion(LightPlugin.Version, oldVer!))
+                        {
+                            JustUpdated = true;
+                            LightLogger.Log($"[Version] 检测到版本更新：{oldVer} -> {LightPlugin.Version}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[Version] 读取旧 version.json 失败：{ex.Message}");
+            }
+            #endregion
+
             var orig = new { Light = LightPlugin.Version,LightInDark = LIDPlugin.Version };
             string json = JsonSerializer.Serialize(orig,new JsonSerializerOptions { WriteIndented = true});
-            string path = Path.Combine(Paths.PluginPath, "version.json");
             File.WriteAllText(path, json);
             return true;
         }
@@ -30,6 +56,39 @@ public class VersionMaker
             return false;
         }
     }
+
+    #region 新增：版本变化标记（供"更新后自动弹新闻"使用）
+    /// <summary>本次启动是否检测到版本更新（由 MakeVersion 在写入前比较得出）</summary>
+    public static bool JustUpdated { get; private set; }
+
+    private static bool _updatedConsumed = true;
+
+    /// <summary>
+    /// 取用一次"刚更新"标记：同一次启动只会返回一次 true，
+    /// 避免每次进出主菜单都反复弹新闻。
+    /// </summary>
+    public static bool ConsumeJustUpdated()
+    {
+        if (JustUpdated && !_updatedConsumed)
+        {
+            _updatedConsumed = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 当前版本是否比旧版本新。版本号形如 1.0.0（带 v 前缀请先去掉），
+    /// 解析不了时退化成"不相等即视为更新"。
+    /// </summary>
+    private static bool IsNewerVersion(string current, string previous)
+    {
+        if (System.Version.TryParse(current, out var c) && System.Version.TryParse(previous, out var p))
+            return c > p;
+        return !string.Equals(current, previous, StringComparison.OrdinalIgnoreCase);
+    }
+    #endregion
+
     public static readonly string UpdaterExeName = "LightInDarkUpdater.exe";
 
     public static string CheckForUpdate()

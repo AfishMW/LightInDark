@@ -1,7 +1,11 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Light.Utilities;
 using LightInDark.Core;
+using TMPro;
 using UnityEngine;
 
 namespace Light.Patches;
@@ -58,7 +62,144 @@ public static class MainMenuButtonSpritePatch
         }
     }
 
-    private static void ReplaceButton(PassiveButton btn, string relativePath)
+    #region 新增：右侧面板（点击"开始"后出现）按钮贴图
+
+    /// <summary>
+    /// 文件名 → 右侧面板按钮。
+    /// 这些图是 1920x1080 大画布 + 透明留白，只画了按钮那一块；ReplaceButton 会自动裁掉透明边。
+    /// 缩放用 fitInside：等比缩放到"完整放进原按钮框"，不会越界、不会顶到相邻按钮；
+    /// 觉得太小/太大就调该条目的 Scale（1.2 = 放大 20%，0.9 = 缩小 10%）。
+    /// </summary>
+    private static readonly (string File, Func<MainMenuManager, PassiveButton?> Pick, float Scale)[] RightPanelButtons =
+    [
+        ("Buttons/MainMenu/Local.png",      m => m.playLocalButton,  1f),
+        ("Buttons/MainMenu/OnLine.png",     m => m.PlayOnlineButton, 1f),
+        ("Buttons/MainMenu/CreateGame.png", m => m.createGameButton, 1f),
+        ("Buttons/MainMenu/EnterCode.png",  PickEnterCodeButton,     1f),
+        ("Buttons/MainMenu/FindGame.png",   PickFindGame,            1f),
+    ];
+
+    /// <summary>
+    /// 「输入代码」要找的是 OnlineButtons 里那张大卡片 "Enter Code Button"（3.78x2.64，
+    /// 与"创建大厅/寻找游戏"同结构）。
+    /// 注意：MainMenuManager.enterCodeButtons 指的是**点进去之后的整个面板**
+    /// （里面有 JoinGame / FieldsContainer…），不是这张卡片 —— 所以先按名字精确找。
+    /// </summary>
+    private static PassiveButton? PickEnterCodeButton(MainMenuManager m)
+    {
+        try
+        {
+            // ① 正确目标：名字就是 "Enter Code Button" 的那张卡片
+            foreach (var pb in UnityEngine.Object.FindObjectsOfType<PassiveButton>(true))
+            {
+                if (pb == null) continue;
+                if (pb.gameObject.name == "Enter Code Button") return pb;
+            }
+
+            // ② 兜底（老行为）：enterCodeButtons 面板里的第一个按钮
+            var go = m.enterCodeButtons;
+            if (go != null)
+            {
+                var pb = go.GetComponent<PassiveButton>();
+                if (pb == null) pb = go.GetComponentInChildren<PassiveButton>(true);
+                if (pb != null) return pb;
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[MainMenuButtonSprite] 找 Enter Code Button 失败：{ex.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>findGameButton 的类型是 FindGameButton（纯 MonoBehaviour），真正的按钮组件挂在同一个物体上。</summary>
+    private static PassiveButton? PickFindGame(MainMenuManager m)
+    {
+        try
+        {
+            var fg = m.findGameButton;
+            if (fg == null) return null;
+            return fg.gameObject.GetComponent<PassiveButton>();
+        }
+        catch { return null; }
+    }
+
+    [HarmonyPatch(nameof(MainMenuManager.Start))]
+    [HarmonyPostfix]
+    public static void RightPanelPostfix(MainMenuManager __instance)
+    {
+        try
+        {
+            foreach (var (file, pick, scale) in RightPanelButtons)
+            {
+                try
+                {
+                    var btn = pick(__instance);
+                    if (btn == null)
+                    {
+                        LightLogger.LogWarning($"[MainMenuButtonSprite] 右侧按钮为空，跳过 {file}");
+                        continue;
+                    }
+                    ReplaceButton(btn, file, fitInside: true, scale: scale, hideExtraRenderers: true);
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogError($"[MainMenuButtonSprite] 右侧替换失败 {file}", ex);
+                }
+            }
+
+            if (_watch.Count > 0) _watchFrame = 0;   // 启用保图守卫
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuButtonSprite.RightPanelPostfix]", ex);
+        }
+    }
+
+    /// <summary>保图守卫的帧计数（-1 = 未启用）。</summary>
+    private static int _watchFrame = -1;
+
+    [HarmonyPatch("LateUpdate")]
+    [HarmonyPostfix]
+    public static void WatchLateUpdate()
+    {
+        if (_watchFrame < 0) return;
+        _watchFrame++;
+
+        // 保图：原版会在稍后把"在线"卡片的贴图刷回原版（该按钮处于 Disabled 状态）。
+        // 前 10 秒每帧盯，之后每 60 帧盯一次；发现被改回就补回来。
+        if (_watchFrame <= 600 || _watchFrame % 60 == 0)
+            GuardSprites();
+    }
+
+    /// <summary>
+    /// 保图守卫：发现我们贴的图/颜色被改回，就立刻再贴一次，并记录"第几帧被改回"
+    /// （这一步也顺便定位原版是在什么时候动的手）。
+    /// </summary>
+    private static void GuardSprites()
+    {
+        foreach (var (label, sr, expected, color) in _watch)
+        {
+            try
+            {
+                if (sr == null || expected == null) continue;
+                if (sr.sprite == expected && sr.color == color) continue;
+
+                sr.sprite = expected;
+                sr.color = color;
+                LightLogger.Log($"[MainMenuButtonSprite][保图] {label} 被改回，已重新贴上（第 {_watchFrame} 帧）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[MainMenuButtonSprite][保图] {label}: {ex.Message}");
+            }
+        }
+    }
+
+    #endregion
+
+    private static void ReplaceButton(PassiveButton btn, string relativePath,
+        bool fitInside = false, float scale = 1f, bool hideExtraRenderers = false)
     {
         var texture = ResourceHelper.LoadTexture(relativePath);
         if (texture == null)
@@ -76,16 +217,32 @@ public static class MainMenuButtonSpritePatch
             height = texture.height;
         }
 
-        var activeSr = btn.activeSprites != null ? btn.activeSprites.GetComponent<SpriteRenderer>() : null;
-        if (activeSr == null)
+        // ── 找"主渲染器" ────────────────────────────────────────────────
+        // 左侧按钮：贴图挂在 activeSprites 上，按老逻辑找即可。
+        // 右侧面板（fitInside = true）：结构五花八门，必须用启发式挑，否则会像上一版那样翻车 ——
+        //   本地/在线：真正的卡片大图是 Scaler/Background（5.12x5.12，sprite=mainscreen1/onlinemode），
+        //              而 Scaler/Label/Highlight|Inactive|Disabled 只是 0.90x0.81 的小标签层。
+        //              上一版把这些小标签当主图 → 新图被塞进小槽里，看起来"被压得很狠"。
+        //   输入代码：真正的底是 Background（0.48x0.48），但 Checkmark（0.60x0.48）面积更大，
+        //              上一版按"第一个/最大"挑就挑成了勾选图标 → 输入框贴图根本没换。
+        //   创建/搜索：三个状态图（Highlight/Inactive/Clicked）尺寸完全一致，都要换。
+        // 规则：优先"名字像背景/FIELD 的图"里面积最大的；没有再退到"面积最大的"。
+        var containers = new[]
         {
-            LightLogger.LogWarning($"[MainMenuButtonSprite] 未找到 activeSprites 渲染器 {relativePath}");
+            btn.activeSprites, btn.inactiveSprites, btn.disabledSprites,
+            btn.selectedSprites, btn.selectedInactiveSprites, btn.onClickSprites,
+        };
+
+        var mainSr = fitInside ? FindMainRendererSmart(btn) : FindMainRenderer(btn, containers);
+        if (mainSr == null)
+        {
+            LightLogger.LogWarning($"[MainMenuButtonSprite] 找不到任何带贴图的 SpriteRenderer，跳过 {relativePath}");
             return;
         }
-        var inactiveSr = btn.inactiveSprites != null ? btn.inactiveSprites.GetComponent<SpriteRenderer>() : null;
 
-        var oldSpr = activeSr.sprite;
+        var oldSpr = mainSr.sprite;
         float basePPU = oldSpr != null ? oldSpr.pixelsPerUnit : 100f;
+        float oldMainArea = SpriteArea(oldSpr);        // 换图前先记下主图面积，用于判断"状态图是否全尺寸"
 
         // 沿用原按钮锚点语义：用原 sprite 归一化 pivot 作为新裁剪 sprite 的 pivot，
         // 使按钮条中心对准原按钮中心，避免整体偏移（原锚点默认在中心 0.5）
@@ -93,21 +250,241 @@ public static class MainMenuButtonSpritePatch
             ? new Vector2(oldSpr.pivot.x / oldSpr.rect.width, oldSpr.pivot.y / oldSpr.rect.height)
             : new Vector2(0.5f, 0.5f);
 
-        // 以原按钮宽度换算 PPU，让裁剪后的按钮条与原按钮同宽（保持图片宽高比）
+        // 换算 PPU：
+        //   fitInside = false（左侧按钮沿用原行为）—— 与原按钮同宽，高度按图片比例走
+        //   fitInside = true （右侧面板）        —— 等比缩放，完整"放进"原按钮框内
         float ppu = basePPU;
-        if (oldSpr != null && oldSpr.bounds.size.x > 0f)
-            ppu = width / oldSpr.bounds.size.x;
+        if (oldSpr != null && oldSpr.bounds.size.x > 0f && oldSpr.bounds.size.y > 0f)
+        {
+            float oldW = oldSpr.bounds.size.x;
+            float oldH = oldSpr.bounds.size.y;
+
+            if (fitInside)
+            {
+                float aspect = (float)width / height;                 // 新图宽高比
+                float targetW = Mathf.Min(oldW, oldH * aspect);        // 受高度限制时按高度反推宽度
+                ppu = width / targetW;
+                LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 适配：原框 {oldW:F2}x{oldH:F2}，新图比例 {aspect:F2}，目标宽 {targetW:F2}");
+            }
+            else
+            {
+                ppu = width / oldW;
+            }
+
+            if (scale > 0.01f) ppu /= scale;                           // scale > 1 → 变大
+        }
 
         var sprite = Sprite.Create(texture, new Rect(minX, minY, width, height), pivot, ppu);
+        try { sprite.name = "LID_" + System.IO.Path.GetFileNameWithoutExtension(relativePath); } catch { }   // 给运行时 sprite 起名，日志才看得清
 
-        activeSr.sprite = sprite;
-        if (inactiveSr != null) inactiveSr.sprite = sprite;
+        // ── 贴图赋值 ────────────────────────────────────────────────────
+        var assigned = new HashSet<SpriteRenderer> { mainSr };
+        mainSr.sprite = sprite;
 
-        LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 裁剪 {minX},{minY} {width}x{height} PPU={ppu}");
+        // 全尺寸的状态贴图（>= 主图面积的 50%）也一并换成新图：
+        // 创建/搜索的三个状态图就属于这种，换掉后悬浮/按下/禁用都不会闪回原版。
+        // 小尺寸的状态贴图（本地/在线那两个 0.90x0.81 小标签）不换，交给下面统一关掉。
+        foreach (var container in containers)
+        {
+            if (container == null) continue;
+            var sr = PickInContainer(container);
+            if (sr == null || assigned.Contains(sr)) continue;
 
-        FixCollider(btn, activeSr);
+            // 左侧按钮（fitInside=false）沿用老行为：所有状态容器一律换图，
+            // 否则会出现"常态显示原版、鼠标悬浮才变模组"的错乱（状态图和主图尺寸差别大时会踩到）。
+            // 右侧面板才用"面积 >= 主图 50% 才算全尺寸状态图"的规则。
+            bool fullSize = !fitInside || (oldMainArea > 0f && SpriteArea(sr.sprite) >= oldMainArea * 0.5f);
+            if (fullSize)
+            {
+                sr.sprite = sprite;
+                assigned.Add(sr);
+            }
+        }
+
+        // ── 关掉多余渲染器 ──────────────────────────────────────────────
+        // 原版卡片上还叠着"内嵌缩略图 / 小标签 / Shine 辉光"等层，会盖在新图上面。
+        // 这里用【组件级】sr.enabled = false：PassiveButton 切状态是 SetActive 容器，
+        // 组件级关闭不会被它重新打开（用 SetActive 关会被覆盖，原版贴图会再冒出来）。
+        if (hideExtraRenderers)
+        {
+            int hidden = 0;
+            foreach (var sr in btn.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr == null || assigned.Contains(sr)) continue;
+                if (!sr.enabled) continue;
+                sr.enabled = false;
+                hidden++;
+            }
+            LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 关闭多余渲染器 {hidden} 个");
+        }
+
+        UnityEngine.Color wantColor = UnityEngine.Color.white;   // 保图守卫要用的期望颜色（正式版=白）
+
+        LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 裁剪 {minX},{minY} {width}x{height} PPU={ppu:F2} 世界尺寸={sprite.bounds.size.x:F2}x{sprite.bounds.size.y:F2} 主渲染器={RelPath(btn.transform, mainSr)}");
+
+        // 登记保图：替换后盯着这张图，被原版改回去就再贴一次
+        _watch.Add((relativePath, mainSr, sprite, wantColor));
+
+        FixCollider(btn, mainSr);
         HideDecorations(btn);
         SetButtonTextColor(btn);
+    }
+
+    /// <summary>替换过的渲染器，用于延迟复核与"保图"。</summary>
+    private static readonly List<(string Label, SpriteRenderer Sr, Sprite Expected, UnityEngine.Color Color)> _watch = new();
+
+    /// <summary>名字里带这些词的渲染器优先当"主图"（真正的按钮底/卡片大图）。</summary>
+    private static readonly string[] BackgroundHints =
+        { "background", "bg", "field", "frame", "screen", "block", "base" };
+
+    /// <summary>
+    /// 右侧面板专用：启发式挑主渲染器。
+    /// 先看"名字像背景的"（取其中面积最大者），没有再退到"所有渲染器里面积最大的"。
+    /// 这样 本地/在线 会挑中 Scaler/Background(5.12x5.12) 而不是 0.90x0.81 的小标签，
+    /// 输入代码 会挑中 Background 而不是更大的 Checkmark。
+    /// </summary>
+    private static SpriteRenderer? FindMainRendererSmart(PassiveButton btn)
+    {
+        SpriteRenderer? bestHinted = null;
+        float bestHintedArea = -1f;
+        SpriteRenderer? bestAny = null;
+        float bestAnyArea = -1f;
+
+        foreach (var sr in btn.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            if (sr == null || sr.sprite == null || IsDecorative(sr)) continue;
+
+            float area = SpriteArea(sr.sprite);
+            if (area > bestAnyArea)
+            {
+                bestAnyArea = area;
+                bestAny = sr;
+            }
+
+            string name = sr.gameObject.name.ToLowerInvariant();
+            bool hinted = false;
+            foreach (var hint in BackgroundHints)
+            {
+                if (name.Contains(hint)) { hinted = true; break; }
+            }
+            if (hinted && area > bestHintedArea)
+            {
+                bestHintedArea = area;
+                bestHinted = sr;
+            }
+        }
+
+        return bestHinted ?? bestAny;
+    }
+
+    /// <summary>这些是装饰层（辉光/图标/勾选），永远不当目标 —— 否则新图会被赋给它们、随后又被隐藏掉。</summary>
+    private static readonly string[] ExcludeHints = { "shine", "glow", "icon", "checkmark", "check", "sparkle" };
+
+    private static bool HasHint(string lowerName, string[] hints)
+    {
+        foreach (var h in hints)
+        {
+            if (lowerName.Contains(h)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsDecorative(SpriteRenderer sr)
+    {
+        try { return HasHint(sr.gameObject.name.ToLowerInvariant(), ExcludeHints); }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 在一个状态容器里挑"真正的按钮图"，优先级：
+    ///   ① 容器自己身上的渲染器 —— 左侧主菜单按钮就是这种结构（必须优先，
+    ///      否则容器里那块更大的 Shine 辉光会被当成目标，新图赋给辉光后被隐藏 = 常态仍是原版）；
+    ///   ② 子物体里名字像底图的（Background / Bg / Field / Frame / Screen …）—— 右侧面板是这种结构；
+    ///   ③ 子物体里面积最大的非装饰渲染器。
+    /// </summary>
+    private static SpriteRenderer? PickInContainer(GameObject? container)
+    {
+        if (container == null) return null;
+
+        var own = container.GetComponent<SpriteRenderer>();
+        if (own != null && !IsDecorative(own)) return own;
+
+        SpriteRenderer? hinted = null;
+        float hintedArea = -1f;
+        SpriteRenderer? any = null;
+        float anyArea = -1f;
+
+        foreach (var sr in container.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            if (sr == null || sr.sprite == null || IsDecorative(sr) || sr == own) continue;
+
+            float area = SpriteArea(sr.sprite);
+            if (area > anyArea)
+            {
+                anyArea = area;
+                any = sr;
+            }
+            if (HasHint(sr.gameObject.name.ToLowerInvariant(), BackgroundHints) && area > hintedArea)
+            {
+                hintedArea = area;
+                hinted = sr;
+            }
+        }
+
+        return hinted ?? any ?? own;
+    }
+
+    /// <summary>sprite 的世界尺寸面积（用于比较"谁是大图"）。</summary>
+    private static float SpriteArea(Sprite? sprite)
+    {
+        if (sprite == null) return 0f;
+        var size = sprite.bounds.size;
+        return size.x * size.y;
+    }
+
+    /// <summary>
+    /// 找主渲染器：优先各状态容器；都找不到就退到"贴图面积最大的那个子渲染器"
+    /// （左侧按钮走这条老逻辑）。
+    /// </summary>
+    private static SpriteRenderer? FindMainRenderer(PassiveButton btn, GameObject?[] containers)
+    {
+        foreach (var c in containers)
+        {
+            var sr = PickInContainer(c);
+            if (sr != null) return sr;
+        }
+
+        SpriteRenderer? best = null;
+        float bestArea = -1f;
+        foreach (var sr in btn.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            if (sr == null || sr.sprite == null || IsDecorative(sr)) continue;
+            float area = SpriteArea(sr.sprite);
+            if (area > bestArea)
+            {
+                bestArea = area;
+                best = sr;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>相对按钮根节点的层级路径，便于看日志定位。</summary>
+    private static string RelPath(Transform root, Component c)
+    {
+        try
+        {
+            var sb = new System.Text.StringBuilder(c.gameObject.name);
+            var t = c.transform.parent;
+            int guard = 0;
+            while (t != null && t != root && guard++ < 8)
+            {
+                sb.Insert(0, t.name + "/");
+                t = t.parent;
+            }
+            return sb.ToString();
+        }
+        catch { return "(?)"; }
     }
 
     /// <summary>检测非透明像素的最小/最大包围盒。</summary>
@@ -193,21 +570,29 @@ public static class MainMenuButtonSpritePatch
         }
     }
 
-    /// <summary>按钮文字设为辉光白，与按钮边缘辉光呼应。</summary>
+    /// <summary>与主界面按钮文字同款的"辉光白"（本补丁把主界面按钮文字统一成这个颜色）。</summary>
+    private static readonly Color GlowWhite = new Color(1f, 0.95f, 0.85f, 1f);
+
+    /// <summary>按钮文字设为辉光白，与主界面文字保持一致。</summary>
     private static void SetButtonTextColor(PassiveButton btn)
     {
         try
         {
-            // 深蓝紫渐变底配暖白辉光文字
-            var glowWhite = new Color(1f, 0.95f, 0.85f, 1f);
-            btn.activeTextColor = glowWhite;
-            btn.inactiveTextColor = glowWhite;
-            btn.selectedTextColor = glowWhite;
-            btn.disabledTextColor = glowWhite;
+            btn.activeTextColor = GlowWhite;
+            btn.inactiveTextColor = GlowWhite;
+            btn.selectedTextColor = GlowWhite;
+            btn.disabledTextColor = GlowWhite;
             if (btn.buttonText != null)
             {
                 btn.buttonText.gameObject.SetActive(true);
-                btn.buttonText.color = glowWhite;
+                btn.buttonText.color = GlowWhite;
+            }
+
+            // 右侧面板等按钮的文字不一定挂在 buttonText 上，直接把子物体里的文字一并刷成同一个白
+            foreach (var tmp in btn.GetComponentsInChildren<TextMeshPro>(true))
+            {
+                if (tmp == null) continue;
+                tmp.color = GlowWhite;
             }
         }
         catch (Exception ex)
