@@ -118,9 +118,9 @@ public static class ServerDropDownPatch
         __instance.background.size = new Vector2(backgroundWidth, backgroundHeight); ;
     }
 }
-// [HarmonyPatch(typeof(AuthManager._CoConnect_d__4),nameof(AuthManager._CoConnect_d__4.MoveNext))]
-// public static class AuthPatch
-// {
-//     [HarmonyPrefix]
-//     public static bool Auth_Prefix() => false;
-// }
+//[HarmonyPatch(typeof(AuthManager._CoConnect_d__4), nameof(AuthManager._CoConnect_d__4.MoveNext))]
+//public static class AuthPatch
+//{
+//    [HarmonyPrefix]
+//    public static bool Auth_Prefix() => false;
+//}

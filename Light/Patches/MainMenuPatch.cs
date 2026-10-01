@@ -620,7 +620,8 @@ public static class MainMenuPatch
             _lightScreen = Object.Instantiate(__instance.accountButtons,
                 __instance.accountButtons.transform.parent);
             _lightScreen.name = "LightScreen";
-
+            GetChild(_lightScreen.transform,1)?.gameObject.SetActive(true); // tint
+            GetChild(_lightScreen.transform, 4)?.gameObject.SetActive(false);// 兑换奖励
             var titleEntry = GetChild(_lightScreen.transform, 0)?.GetChild(0);
             if (titleEntry != null)
             {

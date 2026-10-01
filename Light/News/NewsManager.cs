@@ -82,7 +82,7 @@ public class NewsManager
             }
             return sb.ToString();
         }
-        catch (Exception ex) { return detail ?? ""; }
+        catch (Exception ex) { LightLogger.LogWarning(ex.ToString()); return detail ?? ""; }
     }
     #region Patch
     [HarmonyPatch(typeof(PlayerAnnouncementData), nameof(PlayerAnnouncementData.SetAnnouncements))]

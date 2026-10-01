@@ -23,7 +23,6 @@ public static class ButtonBreathEffect
         public bool IsHovering;
         public SpriteRenderer? InactiveSr;
         public Color BaseColor;
-        public GameObject? Shine;
         public PassiveButton? Button;
         public bool IsMainButton;
     }
@@ -123,17 +122,9 @@ public static class ButtonBreathEffect
                 if (state.InactiveSr != null)
                     state.BaseColor = state.InactiveSr.color;
 
+                // 高光（Shine）整体关掉：原本"悬浮时淡入、并跟着鼠标跑"，观感不好，已按要求移除
                 var shine = pb.inactiveSprites.transform.FindChild("Shine");
-                if (shine != null)
-                {
-                    state.Shine = shine.gameObject;
-                    var sr = shine.GetComponent<SpriteRenderer>();
-                    if (sr != null)
-                    {
-                        var c = sr.color;
-                        sr.color = new Color(c.r, c.g, c.b, 0f);
-                    }
-                }
+                if (shine != null) shine.gameObject.SetActive(false);
             }
 
             // 兜底：确保悬停/点击事件非空，避免原版 PassiveButtonManager 触发 NRE
@@ -225,28 +216,6 @@ public static class ButtonBreathEffect
                         float goldG = Mathf.Clamp01(s.BaseColor.g * brightness + hoverBoost + 0.12f * s.HoverLerp);
                         float goldB = Mathf.Clamp01(s.BaseColor.b * brightness + hoverBoost);
                         s.InactiveSr.color = new Color(goldR, goldG, goldB, s.BaseColor.a);
-                    }
-
-                    if (s.Shine != null)
-                    {
-                        s.Shine.SetActive(s.HoverLerp > 0.01f);
-                        var sr = s.Shine.GetComponent<SpriteRenderer>();
-                        if (sr != null)
-                        {
-                            var c = sr.color;
-                            sr.color = new Color(c.r, c.g, c.b, 0.5f * s.HoverLerp);
-                        }
-
-                        if (s.IsHovering && Camera.main != null)
-                        {
-                            Vector3 mouseWorld = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-                            Vector3 local = s.Shine.transform.parent.InverseTransformPoint(mouseWorld);
-                            s.Shine.transform.localPosition = new Vector3(
-                                Mathf.Clamp(local.x, -0.5f, 0.5f),
-                                Mathf.Clamp(local.y, -0.3f, 0.3f),
-                                s.Shine.transform.localPosition.z
-                            );
-                        }
                     }
                 }
                 catch

@@ -39,18 +39,18 @@ public partial class LightPlugin : BasePlugin
     public static LightSettings.LightSettingsData LightSettingsData;
     public Harmony Harmony { get; } = new(Id);
     public static string LightUserDataPath => Path.Combine(Application.persistentDataPath, "LightInDark");
-
+    public const string ModGuid = "1c3cba75-359d-4504-a4dc-b0916e3f3010";
     internal static ManualLogSource StaticLog { get; private set; } = null!;
 
     public override void Load()
     {
         try
         {
-#if DEBUG
-            FirstChanceExceptionLogger.Initialize();
-#endif
+            //FirstChanceExceptionLogger.Initialize();
             StaticLog = Log;
             Harmony.PatchAll();
+            CurrentModRegistration.ModRegistrationGuidString = ModGuid;
+            Log.LogInfo($"Mod Guid {CurrentModRegistration.ModRegistrationGuidString},解析{CurrentModRegistration.TryGetModRegistrationGuid(out _)},协议版本{Constants.GetBroadcastVersion()}");
             LightSettingsData = LightSettings.LoadSettingData();
             if (!VersionMaker.MakeVersion())
                 Log.LogError($"VM json 加载失败。具体异常请查看Light.log。");
