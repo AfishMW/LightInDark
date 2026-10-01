@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using LightInDark;
 using LightInDark.Core;
 using System;
@@ -202,16 +202,55 @@ internal class ButtonRolloverHandlerPatch
     }
 }
 
-[HarmonyPatch(typeof(Palette))]
-internal class PalettePatch
+/// <summary>
+/// 把原版"接受绿" <c>Palette.AcceptedGreen</c> 换成模组主色。
+///
+/// 为什么不是 Harmony patch：在 IL2CPP 里 AcceptedGreen 是**静态字段**，interop 把它暴露成
+/// 属性访问器（get_AcceptedGreen），而 Harmony 无法 patch 字段访问器 ——
+/// BepInEx 日志里那句
+///   "Failed to init IL2CPP patch backend for static Color Palette::get_AcceptedGreen(),
+///    using normal patch handlers: ... is a field accessor, it can't be patched."
+/// 就是原来那个 Prefix 从未生效的原因（所以设置里的开关按钮一直是绿的）。
+/// 正解：它可写 → 直接写字段。
+///
+/// 使用点：原版 OptionsMenuBehaviour 里 <c>JoystickButton.color = Palette.AcceptedGreen</c> /
+/// <c>TouchButton.color = Palette.AcceptedGreen</c>，所以在它 Start 之前写一次即可生效。
+/// </summary>
+internal static class PaletteColorOverride
 {
-    [HarmonyPatch(nameof(Palette.AcceptedGreen), MethodType.Getter)]
-    [HarmonyPrefix]
-    public static bool GetAcceptedGreen_Prefix(ref UnityEngine.Color __result)
+    private static UnityEngine.Color? _vanillaGreen;
+
+    /// <summary>应用（或还原）Palette.AcceptedGreen。可重复调用。</summary>
+    public static void Apply()
     {
-        if (LightPlugin.ColorData == null || LightPlugin.ColorData.IsVanillaMode) return true;
-        var c = LightPlugin.ColorData.modMainColor.ToUnityColor();
-        __result = new Color32((byte)(c.r * 255), (byte)(c.g * 255), (byte)(c.b * 255), (byte)(c.a * 255));
-        return false;
+        try
+        {
+            _vanillaGreen ??= Palette.AcceptedGreen;      // 先记下原版绿，便于"原版模式"还原
+
+            if (LightPlugin.ColorData == null || LightPlugin.ColorData.IsVanillaMode)
+            {
+                Palette.AcceptedGreen = _vanillaGreen.Value;
+                return;
+            }
+
+            var c = LightPlugin.ColorData.modMainColor.ToUnityColor();
+            Palette.AcceptedGreen = new UnityEngine.Color(c.r, c.g, c.b, 1f);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[PaletteColorOverride.Apply] {ex.Message}");
+        }
+    }
+}
+
+/// <summary>设置菜单每次打开前先把 AcceptedGreen 换成模组主色（原版 Start 里会读它给 Joystick/Touch 按钮上色）。</summary>
+[HarmonyPatch]
+internal static class PaletteColorPatch
+{
+    [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Start))]
+    [HarmonyPrefix]
+    public static void StartPrefix()
+    {
+        PaletteColorOverride.Apply();
     }
 }

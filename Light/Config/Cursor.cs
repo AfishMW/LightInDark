@@ -124,6 +124,23 @@ public static class Cursor
         }
     }
 
+    /// <summary>
+    /// 重新读取光标配置并应用（供 <see cref="LightSettings.ReloadConfig"/> 调用）。
+    /// 注意：LoadIndexFromJson 之前**没有任何调用点**，所以光标索引一直是启动时的默认值；
+    /// 这里把它接上，重载配置时光标就能按配置文件恢复。
+    /// </summary>
+    public static void Reload()
+    {
+        try
+        {
+            SetCursorIndex(LoadIndexFromJson());
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[Cursor.Reload] {ex.Message}");
+        }
+    }
+
     public static void SaveIndex(int index)
     {
         try

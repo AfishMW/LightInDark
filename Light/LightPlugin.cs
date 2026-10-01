@@ -55,11 +55,13 @@ public partial class LightPlugin : BasePlugin
             if (!VersionMaker.MakeVersion())
                 Log.LogError($"VM json 加载失败。具体异常请查看Light.log。");
             LoadCommand();
+            LightOptionsRegistry.Register();
             EventSystem.RegisterAssembly(typeof(LightPlugin).Assembly);
             ExtractLanguageFiles();
             Language.Load();
             LidRpcRegistry.ScanAndPatch(Harmony);
             ColorData = MainColor.LoadChatColor();
+            PaletteColorOverride.Apply();   // 把原版"接受绿"换成模组主色（IL2CPP 下该字段访问器无法 patch，只能直接写字段）
             LoadRole();
             Dispatcher.Initialize();
 #if !DEBUG

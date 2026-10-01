@@ -588,6 +588,59 @@ public static class MainMenuPatch
         EnforceHowToPlayX("每帧");
     }
 
+    // ── 永久屏蔽主菜单的 EjectButtonMenu（原版那个"弹射"按钮）─────────────────
+    private static GameObject? _ejectMenu;
+    private static bool _ejectMenuLoggedHide;
+
+    /// <summary>
+    /// 一出现就立刻关掉 <c>MainMenuManager/MainUI/AspectScaler/EjectButtonMenu</c>。
+    ///
+    /// 为什么用"每帧检查"而不是"延迟隐藏"：要求是**一出现就关、永远不想看见**。
+    /// 原版至少有 3 条路径把它 SetActive(true)（MainMenuManager.Awake / ActivateMainMenuUI /
+    /// EjectMainMenu 协程里翻 ejectButton），只堵一条必漏；而 LateUpdate 在**渲染之前**执行，
+    /// 所以在这里关掉，它连一帧都不会被画出来。
+    ///
+    /// 只关 GameObject，不动 EjectMainMenu 组件 —— 原版是先 SetActive(true) 再调 StartEjectButton()，
+    /// 我们同帧关掉只会让协程随之中止，不会出现在 inactive 对象上 StartCoroutine 的报错。
+    /// </summary>
+    [HarmonyPatch(typeof(MainMenuManager), "LateUpdate")]
+    [HarmonyPostfix]
+    public static void SuppressEjectMenu_Postfix(MainMenuManager __instance)
+    {
+        try
+        {
+            if (_ejectMenu == null)
+            {
+                var ui = __instance.mainMenuUI;
+                if (ui == null) return;
+
+                // 递归查找（FindChild 取不到未激活的深层对象）；路径 MainUI/AspectScaler/EjectButtonMenu
+                foreach (var tr in ui.GetComponentsInChildren<Transform>(true))
+                {
+                    if (tr == null || tr.name != "EjectButtonMenu") continue;
+                    _ejectMenu = tr.gameObject;
+                    LightLogger.Log("[MainMenuPatch] 已锁定 EjectButtonMenu，将永久隐藏");
+                    break;
+                }
+
+                if (_ejectMenu == null) return;
+            }
+
+            if (!_ejectMenu.activeSelf) return;
+
+            _ejectMenu.SetActive(false);
+            if (!_ejectMenuLoggedHide)
+            {
+                _ejectMenuLoggedHide = true;
+                LightLogger.Log("[MainMenuPatch] EjectButtonMenu 被原版激活 → 已同帧隐藏（不会显示出来）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[MainMenuPatch.SuppressEjectMenu] {ex.Message}");
+        }
+    }
+
     /// <summary>把玩法说明拉回中间；只有真的被改动时才写日志（最多 5 条，避免刷屏）。</summary>
     private static void EnforceHowToPlayX(string when)
     {

@@ -1,10 +1,13 @@
+using Light.Patches;
 using LightInDark.Core;
+using LightInDark.Language;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using UnityEngine;
 using static Light.Config.MainColor;
 
 namespace Light.Config;
@@ -95,5 +98,98 @@ public static class LightSettings
         {
             LightLogger.LogError("[LightSettings.Save]", ex);
         }
+    }
+
+    /// <summary>
+    /// 重载所有**能重载**的配置，并把结果立即应用到运行时：
+    /// <list type="bullet">
+    ///   <item>Settings.json（本文件） → LightPlugin.LightSettingsData</item>
+    ///   <item>ChatSettings.json（模组主色 / 聊天色） → LightPlugin.ColorData，并重新套用原版"接受绿"覆盖</item>
+    ///   <item>语言文件 → Language.Load()</item>
+    ///   <item>光标配置（Cursor.json） → Cursor.Reload()</item>
+    ///   <item>帧率上限 → Application.targetFrameRate 立即生效</item>
+    ///   <item>Light 设置页签上显示的值 → LightOptionsRegistry.SyncFromSettings()</item>
+    /// </list>
+    /// 各步互相独立：某一步失败不会中断后面的，只把返回值置为 false。
+    /// <para>不可重载（需要重启游戏）：Harmony 补丁、角色注册、RPC 定义、Dispatcher、握手系统。</para>
+    /// </summary>
+    /// <returns>全部成功返回 true；任一步骤抛异常返回 false</returns>
+    public static bool ReloadConfig()
+    {
+        bool ok = true;
+
+        // ① 设置 JSON
+        try
+        {
+            LightPlugin.LightSettingsData = LoadSettingData();
+            LightLogger.Log("[ReloadConfig] 设置 JSON 已重载");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            LightLogger.LogError("[ReloadConfig] 设置 JSON 重载失败（继续重载其它项）", ex);
+        }
+
+        // ② 颜色配置（模组主色 / 聊天色）
+        try
+        {
+            LightPlugin.ColorData = MainColor.LoadChatColor();
+            PaletteColorOverride.Apply();                 // 主色可能变了 → 重新写一遍原版"接受绿"
+            LightLogger.Log("[ReloadConfig] 颜色配置已重载并套用");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            LightLogger.LogError("[ReloadConfig] 颜色配置重载失败（继续）", ex);
+        }
+
+        // ③ 语言文件
+        try
+        {
+            Language.Load();
+            LightLogger.Log("[ReloadConfig] 语言文件已重载");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            LightLogger.LogError("[ReloadConfig] 语言重载失败（继续）", ex);
+        }
+
+        // ④ 光标配置
+        try
+        {
+            Cursor.Reload();
+            LightLogger.Log("[ReloadConfig] 光标配置已重载");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            LightLogger.LogError("[ReloadConfig] 光标重载失败（继续）", ex);
+        }
+
+        // ⑤ 帧率上限立即生效
+        try
+        {
+            Application.targetFrameRate = LightPlugin.LightSettingsData?.MaxFPS ?? 60;
+            LightLogger.Log($"[ReloadConfig] 帧率上限已应用：{Application.targetFrameRate}");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            LightLogger.LogError("[ReloadConfig] 帧率应用失败（继续）", ex);
+        }
+
+        // ⑥ 让 Light 设置页签显示最新值（不通过行点击改的值也能同步）
+        try
+        {
+            LightOptionsRegistry.SyncFromSettings();
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[ReloadConfig] 设置页签显示同步失败：{ex.Message}");
+        }
+
+        LightLogger.Log($"[ReloadConfig] 全部完成，全部成功={ok}");
+        return ok;
     }
 }

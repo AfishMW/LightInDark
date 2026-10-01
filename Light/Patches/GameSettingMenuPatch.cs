@@ -16,10 +16,10 @@ namespace Light.Patches;
 /// 原版规则编辑界面（GameSettingMenu）改造 —— 框架版（本轮只搭界面，功能下一轮）：
 ///  - 保留原版三个主按钮（样式/位置不动），仅把第三个按钮文本改为「MOD 设置」；
 ///  - 「游戏设置」页签保留原版内容不动；
-///  - 「预设」页签替换为 4 按钮框架（图片留空 + 下方文字 + hover 换图槽位 + 点击无效果）；
-///  - 「MOD 设置」页签替换为 6 个彩色边框标签（不显示文字，边框中间留空放图标槽位），
+///  - 「预设」页签替换为 4 按钮框架（各 1 张常态图 + 1 张高光图 + 下方文字 + 点击暂无效果）；
+///  - 「MOD 设置」页签替换为 6 个彩色边框标签（不显示文字，边框中间放该标签的常态/悬停图），
 ///    点击标签在下方显示「XX页签暂未实现。」。
-/// 图片资源美术未完成，全部留空槽位（null 安全，不崩）。
+/// 美术资源按约定路径从嵌入资源加载（见 LoadTabAndPresetAssets），文件缺失时保持占位、不崩。
 /// </summary>
 [HarmonyPatch]
 public static class GameSettingMenuPatch
@@ -40,11 +40,88 @@ public static class GameSettingMenuPatch
         "加载预设", "保存预设", "导出预设为TXT文件", "导入预设",
     };
 
-    // ---- 美术资源槽位（未完成，先留空；访问一律 null 安全，不崩）----
-    private static Sprite? _tabIconNormal;    // TODO: 标签图标（默认）
-    private static Sprite? _tabIconHover;     // TODO: 标签图标（鼠标悬停）
-    private static Sprite? _presetImageNormal; // TODO: 预设按钮图片（默认）
-    private static Sprite? _presetImageHover;  // TODO: 预设按钮图片（鼠标悬停）
+    // =====================================================================
+    //  美术资源槽位
+    //  预设页 4 按钮：各 1 张常态 + 1 张高光 = 8 张
+    //  MOD 页 6 标签：各 1 张常态 + 1 张悬停 = 12 张
+    //  约定路径（相对 Light.Resources，即 Light\Resources\ 下）：
+    //    预设 → GUI\Preset\<名字>Normal.png / <名字>Hover.png
+    //    标签 → GUI\RoleTab\<Key>Normal.png / <Key>Hover.png
+    //  文件缺失时该项保持 null → 走原有暗色占位 / 空图标槽，不崩。
+    // =====================================================================
+
+    /// <summary>预设按钮 4 张常态图（顺序同 <see cref="PresetLabels"/>）。</summary>
+    private static readonly Sprite?[] _presetNormal = new Sprite?[4];
+    /// <summary>预设按钮 4 张高光图（顺序同上）。</summary>
+    private static readonly Sprite?[] _presetHover = new Sprite?[4];
+    /// <summary>MOD 标签 6 张常态图（顺序同 <see cref="ModTabs"/>）。</summary>
+    private static readonly Sprite?[] _tabNormal = new Sprite?[6];
+    /// <summary>MOD 标签 6 张悬停图（顺序同上）。</summary>
+    private static readonly Sprite?[] _tabHover = new Sprite?[6];
+
+    private static bool _assetsLoaded;
+
+    /// <summary>预设按钮图片文件名（不带 Normal/Hover 后缀）。</summary>
+    private static readonly string[] PresetFileNames =
+    {
+        "LoadPreset", "SavePreset", "ExportPreset", "ImportPreset",
+    };
+
+    /// <summary>
+    /// 载入全部槽位图片。每个文件独立 try/catch 且缺失即留 null，
+    /// 因此"只画好了其中几张"也能正常工作。
+    /// </summary>
+    private static void LoadTabAndPresetAssets()
+    {
+        if (_assetsLoaded) return;
+        _assetsLoaded = true;
+
+        for (int i = 0; i < PresetFileNames.Length && i < _presetNormal.Length; i++)
+        {
+            _presetNormal[i] = TryLoad($"GUI/Preset/{PresetFileNames[i]}Normal.png");
+            _presetHover[i] = TryLoad($"GUI/Preset/{PresetFileNames[i]}Hover.png");
+        }
+
+        for (int i = 0; i < ModTabs.Length && i < _tabNormal.Length; i++)
+        {
+            _tabNormal[i] = TryLoad($"GUI/RoleTab/{ModTabs[i].Key}Normal.png");
+            _tabHover[i] = TryLoad($"GUI/RoleTab/{ModTabs[i].Key}Hover.png");
+        }
+
+        int ok = 0;
+        foreach (var s in _presetNormal) if (s != null) ok++;
+        foreach (var s in _presetHover) if (s != null) ok++;
+        foreach (var s in _tabNormal) if (s != null) ok++;
+        foreach (var s in _tabHover) if (s != null) ok++;
+        LightLogger.Log($"[GameSettingMenuPatch] 槽位图片载入完成：{ok}/20 张（缺失项保持占位）");
+    }
+
+    /// <summary>从嵌入资源按相对路径取 Sprite；不存在时静默返回 null（不打错误日志）。</summary>
+    private static Sprite? TryLoad(string relativePath)
+    {
+        try
+        {
+            var asm = typeof(LightPlugin).Assembly;
+            string resName = "Light.Resources." + relativePath.Replace('/', '.').Replace('\\', '.');
+            using var stream = asm.GetManifestResourceStream(resName);
+            if (stream == null) return null;      // 美术未提供：正常情况，不报错
+
+            byte[] bytes = new byte[stream.Length];
+            stream.Read(bytes, 0, bytes.Length);
+
+            var tex = new Texture2D(2, 2, TextureFormat.ARGB32, false);
+            if (!ImageConversion.LoadImage(tex, bytes, false)) return null;
+            tex.wrapMode = TextureWrapMode.Clamp;
+
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f), 100f);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[GameSettingMenuPatch.TryLoad] {relativePath} 载入失败：{ex.Message}");
+            return null;
+        }
+    }
 
     // ---- 尺寸 ----
     private const float TabWidth = 0.8f;
@@ -253,6 +330,8 @@ public static class GameSettingMenuPatch
 
     private static GameObject BuildPresetsPage(Transform parent)
     {
+        LoadTabAndPresetAssets();
+
         var page = NewUIObject("LightPresetsPage", parent, new Vector3(0f, 0.1f, -2.5f));
 
         for (int i = 0; i < PresetLabels.Length; i++)
@@ -260,32 +339,37 @@ public static class GameSettingMenuPatch
             int row = i / 2;
             int col = i % 2;
             var pos = new Vector2((col - 0.5f) * PresetSpacingX, (0.5f - row) * PresetSpacingY);
-            CreatePresetButton(page.transform, PresetLabels[i], pos);
+            CreatePresetButton(page.transform, PresetLabels[i], pos, i);
         }
 
         return page;
     }
 
     /// <summary>
-    /// 预设页按钮：图片槽位（默认/悬停双图，资源未提供先空着）+ 下方文字；
-    /// hover 时若有悬停图则切换（null 安全）；点击本轮无效果。
+    /// 预设页按钮：每个按钮用自己的常态图 + 高光图（4 组共 8 张），
+    /// 资源缺失时退回暗色底 + 下方文字；点击本轮无效果。
     /// </summary>
-    private static void CreatePresetButton(Transform parent, string label, Vector2 pos)
+    private static void CreatePresetButton(Transform parent, string label, Vector2 pos, int index)
     {
+        var normal = index < _presetNormal.Length ? _presetNormal[index] : null;
+        var hover = index < _presetHover.Length ? _presetHover[index] : null;
+
         var go = NewUIObject($"LightPresetButton_{label}", parent, new Vector3(pos.x, pos.y, 0f));
 
         // 图片槽位（空图时给一块暗色底，便于看到按钮范围）
         var img = NewUIObject("Image", go.transform, new Vector3(0f, 0f, 0f));
         var imgSr = img.AddComponent<SpriteRenderer>();
-        imgSr.sprite = _presetImageNormal;                       // 资源未提供 → null
+        imgSr.sprite = normal;                                   // 资源未提供 → null
         imgSr.drawMode = SpriteDrawMode.Sliced;
         imgSr.size = new Vector2(PresetWidth, PresetHeight);
-        imgSr.color = _presetImageNormal != null
+        imgSr.color = normal != null
             ? UColor.white
             : new UColor(0.15f, 0.15f, 0.15f, 0.8f);
 
-        // 下方文字
-        CloneText(go.transform, new Vector3(0f, -PresetHeight * 0.5f - 0.2f, -0.1f), label, 1.1f);
+        // 下方文字：走统一模板（与主界面"本地/在线"卡片同字体 + 辉光白）
+        // 有图时文字压在图片下缘内，省出纵向空间；无图时维持原留白。
+        float textY = normal != null ? -PresetHeight * 0.5f + 0.18f : -PresetHeight * 0.5f - 0.2f;
+        MenuTextTemplate.Create(go.transform, new Vector3(0f, textY, -0.1f), label, 1.1f);
 
         // 点击区域 + PassiveButton
         AddButtonArea(go, PresetWidth, PresetHeight);
@@ -294,11 +378,11 @@ public static class GameSettingMenuPatch
         pb.OnClick.AddListener((UnityAction)(() => { /* 本轮无效果 */ }));
         pb.OnMouseOver.AddListener((UnityAction)(() =>
         {
-            if (_presetImageHover != null) imgSr.sprite = _presetImageHover;
+            if (hover != null) imgSr.sprite = hover;
         }));
         pb.OnMouseOut.AddListener((UnityAction)(() =>
         {
-            if (_presetImageNormal != null) imgSr.sprite = _presetImageNormal;
+            if (normal != null) imgSr.sprite = normal;
         }));
     }
 
@@ -308,6 +392,8 @@ public static class GameSettingMenuPatch
 
     private static GameObject BuildModPage(Transform parent)
     {
+        LoadTabAndPresetAssets();
+
         var page = NewUIObject("LightModSettingsPage", parent, new Vector3(0f, 1.2f, -2.5f));
 
         for (int i = 0; i < ModTabs.Length; i++)
@@ -315,7 +401,7 @@ public static class GameSettingMenuPatch
             int idx = i;
             CreateTabButton(page.transform, ModTabs[i].Key, ModTabs[i].BorderColor,
                 new Vector2((i - 2.5f) * TabSpacing, 0.8f),
-                (UnityAction)(() => OnModTabClicked(idx)));
+                (UnityAction)(() => OnModTabClicked(idx)), i);
         }
 
         // 占位提示（点击标签后显示「XX页签暂未实现。」）
@@ -325,12 +411,16 @@ public static class GameSettingMenuPatch
     }
 
     /// <summary>
-    /// 彩色边框标签：边框 = 4 条代码色块（白 sprite tint 成边框色），中间留空放图标槽位。
-    /// 标签上不显示文字；hover 换图标（资源未提供时不处理）。
+    /// 彩色边框标签：边框 = 4 条代码色块（白 sprite tint 成边框色），
+    /// 中间放该标签自己的常态图 + 悬停图（6 组共 12 张，资源缺失时中间留空）。
+    /// 标签上不显示文字。
     /// </summary>
     private static void CreateTabButton(Transform parent, string key, UColor borderColor,
-        Vector2 pos, UnityAction onClick)
+        Vector2 pos, UnityAction onClick, int index)
     {
+        var normal = index < _tabNormal.Length ? _tabNormal[index] : null;
+        var hover = index < _tabHover.Length ? _tabHover[index] : null;
+
         var go = NewUIObject($"LightModTab_{key}", parent, new Vector3(pos.x, pos.y, 0f));
 
         float halfW = TabWidth * 0.5f;
@@ -343,10 +433,10 @@ public static class GameSettingMenuPatch
         MakeRect(go.transform, "Left", t, TabHeight - t * 2f, -halfW + t * 0.5f, 0f, borderColor);
         MakeRect(go.transform, "Right", t, TabHeight - t * 2f, halfW - t * 0.5f, 0f, borderColor);
 
-        // 中间留空：图标槽位（图片未画好，null 安全）
+        // 中间图标槽位（图片未提供时为空，只有边框可见）
         var icon = NewUIObject("IconSlot", go.transform, Vector3.zero);
         var iconSr = icon.AddComponent<SpriteRenderer>();
-        iconSr.sprite = _tabIconNormal;                          // 资源未提供 → null
+        iconSr.sprite = normal;                                  // 资源未提供 → null
         iconSr.drawMode = SpriteDrawMode.Sliced;
         iconSr.size = new Vector2(IconSize, IconSize);
 
@@ -357,11 +447,11 @@ public static class GameSettingMenuPatch
         pb.OnClick.AddListener(onClick);
         pb.OnMouseOver.AddListener((UnityAction)(() =>
         {
-            if (_tabIconHover != null) iconSr.sprite = _tabIconHover;
+            if (hover != null) iconSr.sprite = hover;
         }));
         pb.OnMouseOut.AddListener((UnityAction)(() =>
         {
-            if (_tabIconNormal != null) iconSr.sprite = _tabIconNormal;
+            if (normal != null) iconSr.sprite = normal;
         }));
     }
 

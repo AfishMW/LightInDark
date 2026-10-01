@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Light.Utilities;
+using Light.UI.Window;
 using LightInDark.Core;
 using TMPro;
 using UnityEngine;
@@ -158,36 +159,55 @@ public static class MainMenuButtonSpritePatch
 
     /// <summary>保图守卫的帧计数（-1 = 未启用）。</summary>
     private static int _watchFrame = -1;
+    private static int _guardLogs;                    // 保图日志条数上限（避免刷屏）
 
+    /// <summary>
+    /// 保图守卫：**每帧**检查我们贴的图有没有被原版改回，发现就立刻补回来。
+    ///
+    /// 两个要点：
+    ///  1. **每帧**检查。早期版本是"前 10 秒每帧、之后每 60 帧查一次" —— 那会让原版贴图整整显示几十帧。
+    ///  2. <see cref="HarmonyPriority"/> = <c>Priority.Last</c>：让本 postfix 在同一个 LateUpdate 的
+    ///     其它 postfix **之后**执行，保证"本帧最后写入者"是我们。否则就会出现两边每帧互相覆盖
+    ///     （画面一帧原版一帧模组，即"打架"）。
+    /// </summary>
     [HarmonyPatch("LateUpdate")]
     [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
     public static void WatchLateUpdate()
     {
         if (_watchFrame < 0) return;
         _watchFrame++;
 
-        // 保图：原版会在稍后把"在线"卡片的贴图刷回原版（该按钮处于 Disabled 状态）。
-        // 前 10 秒每帧盯，之后每 60 帧盯一次；发现被改回就补回来。
-        if (_watchFrame <= 600 || _watchFrame % 60 == 0)
-            GuardSprites();
+        GuardSprites();
     }
 
     /// <summary>
-    /// 保图守卫：发现我们贴的图/颜色被改回，就立刻再贴一次，并记录"第几帧被改回"
-    /// （这一步也顺便定位原版是在什么时候动的手）。
+    /// 发现贴图被改回就立刻再贴一次。
+    /// 只守**贴图**、不守颜色：颜色是原版的正常功能（鼠标悬浮/禁用时 ButtonRolloverHandler 会改颜色），
+    /// 之前连颜色一起强写会把悬浮反馈吃掉，也是"打架"的一部分。
     /// </summary>
     private static void GuardSprites()
     {
-        foreach (var (label, sr, expected, color) in _watch)
+        foreach (var (label, sr, expected) in _watch)
         {
             try
             {
                 if (sr == null || expected == null) continue;
-                if (sr.sprite == expected && sr.color == color) continue;
+                if (sr.sprite == expected) continue;          // 还是我们的图 → 什么都不做
 
+                string was = sr.sprite != null ? sr.sprite.name : "(null)";
                 sr.sprite = expected;
-                sr.color = color;
-                LightLogger.Log($"[MainMenuButtonSprite][保图] {label} 被改回，已重新贴上（第 {_watchFrame} 帧）");
+
+                if (_guardLogs < 20)
+                {
+                    _guardLogs++;
+                    LightLogger.Log($"[MainMenuButtonSprite][保图] {label} 被改回（原为 {was}），已重新贴上 · 第 {_watchFrame} 帧");
+                }
+                else if (_guardLogs == 20)
+                {
+                    _guardLogs++;
+                    LightLogger.Log("[MainMenuButtonSprite][保图] 日志已达 20 条上限，后续只补图不再记录");
+                }
             }
             catch (Exception ex)
             {
@@ -318,20 +338,18 @@ public static class MainMenuButtonSpritePatch
             LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 关闭多余渲染器 {hidden} 个");
         }
 
-        UnityEngine.Color wantColor = UnityEngine.Color.white;   // 保图守卫要用的期望颜色（正式版=白）
-
         LightLogger.Log($"[MainMenuButtonSprite] {relativePath} 裁剪 {minX},{minY} {width}x{height} PPU={ppu:F2} 世界尺寸={sprite.bounds.size.x:F2}x{sprite.bounds.size.y:F2} 主渲染器={RelPath(btn.transform, mainSr)}");
 
-        // 登记保图：替换后盯着这张图，被原版改回去就再贴一次
-        _watch.Add((relativePath, mainSr, sprite, wantColor));
+        // 登记保图：替换后每帧盯着这张图，被原版改回去就立刻补
+        _watch.Add((relativePath, mainSr, sprite));
 
         FixCollider(btn, mainSr);
         HideDecorations(btn);
         SetButtonTextColor(btn);
     }
 
-    /// <summary>替换过的渲染器，用于延迟复核与"保图"。</summary>
-    private static readonly List<(string Label, SpriteRenderer Sr, Sprite Expected, UnityEngine.Color Color)> _watch = new();
+    /// <summary>替换过的渲染器，供保图守卫每帧检查（只守贴图，颜色交给原版）。</summary>
+    private static readonly List<(string Label, SpriteRenderer Sr, Sprite Expected)> _watch = new();
 
     /// <summary>名字里带这些词的渲染器优先当"主图"（真正的按钮底/卡片大图）。</summary>
     private static readonly string[] BackgroundHints =
@@ -570,8 +588,8 @@ public static class MainMenuButtonSpritePatch
         }
     }
 
-    /// <summary>与主界面按钮文字同款的"辉光白"（本补丁把主界面按钮文字统一成这个颜色）。</summary>
-    private static readonly Color GlowWhite = new Color(1f, 0.95f, 0.85f, 1f);
+    /// <summary>与主界面按钮文字同款的"辉光白"（颜色统一取自 MenuTextTemplate，避免两处各写一份）。</summary>
+    private static readonly Color GlowWhite = MenuTextTemplate.GlowWhite;
 
     /// <summary>按钮文字设为辉光白，与主界面文字保持一致。</summary>
     private static void SetButtonTextColor(PassiveButton btn)
