@@ -39,7 +39,7 @@ public partial class LightPlugin : BasePlugin
     public static LightSettings.LightSettingsData LightSettingsData;
     public Harmony Harmony { get; } = new(Id);
     public static string LightUserDataPath => Path.Combine(Application.persistentDataPath, "LightInDark");
-    public const string ModGuid = "1c3cba75-359d-4504-a4dc-b0916e3f3010";
+    public const string ModGuid = "1c3cba75-359d-4504-a4dc-b0916e3f3010"; // GUID，这辈子不能改。
     internal static ManualLogSource StaticLog { get; private set; } = null!;
 
     public override void Load()
@@ -49,7 +49,7 @@ public partial class LightPlugin : BasePlugin
             //FirstChanceExceptionLogger.Initialize();
             StaticLog = Log;
             Harmony.PatchAll();
-            CurrentModRegistration.ModRegistrationGuidString = ModGuid;
+            CurrentModRegistration.ModRegistrationGuidString = ModGuid; // 感谢树懒18.0+提供的牛逼Modded方法。
             Log.LogInfo($"Mod Guid {CurrentModRegistration.ModRegistrationGuidString},解析{CurrentModRegistration.TryGetModRegistrationGuid(out _)},协议版本{Constants.GetBroadcastVersion()}");
             LightSettingsData = LightSettings.LoadSettingData();
             if (!VersionMaker.MakeVersion())
@@ -61,7 +61,7 @@ public partial class LightPlugin : BasePlugin
             Language.Load();
             LidRpcRegistry.ScanAndPatch(Harmony);
             ColorData = MainColor.LoadChatColor();
-            PaletteColorOverride.Apply();   // 把原版"接受绿"换成模组主色（IL2CPP 下该字段访问器无法 patch，只能直接写字段）
+            PaletteColorOverride.Apply();
             LoadRole();
             Dispatcher.Initialize();
 #if !DEBUG
