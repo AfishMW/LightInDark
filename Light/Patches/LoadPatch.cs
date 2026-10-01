@@ -95,7 +95,7 @@ public static class LoadPatch
         "提示：大厅中，按下Shift可以无视碰撞箱。按下左/右Ctrl时，可以关闭左/右引擎的火",
         "感谢您选择Light In Dark!",
         "不要相信T氏的话",
-        "在主界面按下A什么也不会发生",
+        "本MOD半数代码为AI生成",
         "月痕制作组向你致意",
         "祝你好运！",
     ];
@@ -181,14 +181,10 @@ public static class LoadPatch
         }
     }
 
-    // ======================= Harmony =======================
 
     public static bool Prefix(SplashManager __instance)
     {
-        // 设置中开启"跳过加载动画"时：不拦截，走原版静默加载
-        if (LightPlugin.LightSettingsData.SkipLoadAnimation)
-            return true;
-
+        if (LightPlugin.LightSettingsData.SkipLoadAnimation) return true;
         try
         {
             cachedDoneLoadingRefData |= __instance.doneLoadingRefdata;

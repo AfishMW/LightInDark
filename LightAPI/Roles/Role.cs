@@ -66,6 +66,25 @@ namespace LightInDark.Roles
         /// <summary>职业立绘（帮助详情左上角），为 null 时不显示。</summary>
         public virtual UnityEngine.Sprite IconImage => null;
 
+        /// <summary>
+        /// 该职业要承载的配置项。
+        /// 重写并返回本职业关心的那些配置项（通常是静态块里注册好的实例）；
+        /// 返回 null 或空数组表示本职业没有专属配置。
+        /// 这些配置项会被自动归入本职业所属阵营的分类下显示。
+        /// </summary>
+        public virtual Configuration.ConfigItem[] Configurations => null;
+
+        /// <summary>该职业承载的配置项（null 安全，永不返回 null）。</summary>
+        public Configuration.ConfigItem[] GetConfigurations()
+        {
+            try { return Configurations ?? System.Array.Empty<Configuration.ConfigItem>(); }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[Role] {CodeName} Configurations 读取失败: {ex.Message}");
+                return System.Array.Empty<Configuration.ConfigItem>();
+            }
+        }
+
         // =====================================================================
         // 显示文本（语言键解析）
         // =====================================================================

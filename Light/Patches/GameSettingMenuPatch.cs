@@ -171,6 +171,7 @@ public static class GameSettingMenuPatch
         _presetsPage = null;
         _modPage = null;
         _modPlaceholderText = null;
+        Light.UI.Config.ConfigUIPanel.Clear();
     }
 
     /// <summary>预设页启用时：只显示我们的框架页，隐藏原版预设内容。</summary>
@@ -406,6 +407,10 @@ public static class GameSettingMenuPatch
 
         // 占位提示（点击标签后显示「XX页签暂未实现。」）
         _modPlaceholderText = CloneText(page.transform, new Vector3(0f, -0.8f, -0.1f), "", 1.5f);
+
+        // 配置项面板：金色「调试设置」分类头 + 其下的配置行（原版控件）
+        // 放在标签行下方，与彩边标签错开
+        Light.UI.Config.ConfigUIPanel.Build(page.transform);
 
         return page;
     }

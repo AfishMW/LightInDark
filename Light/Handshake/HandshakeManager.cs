@@ -1,3 +1,10 @@
+using BepInEx.Unity.IL2CPP.Utils.Collections;
+using HarmonyLib;
+using Hazel;
+using LightInDark.Core;
+using LightInDark.Handshake;
+using LightInDark.Modifiers;
+using LightInDark.RPCs;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -6,12 +13,6 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using BepInEx.Unity.IL2CPP.Utils.Collections;
-using HarmonyLib;
-using Hazel;
-using LightInDark.Core;
-using LightInDark.Handshake;
-using LightInDark.RPCs;
 using UnityEngine;
 
 namespace Light.Handshake;
@@ -74,7 +75,7 @@ public static class HandshakeManager
 
             (_localApiHash, _localModHash) = HandshakeCrypto.ComputeLocalHashes();
             LightLogger.Log($"[Handshake] 本地 hash: api={_localApiHash} mod={_localModHash}");
-
+            
             LoadCache();
             CustomRPC.Register(ChallengeRpcHash, OnChallengeReceived);
             CustomRPC.Register(HandshakeRpcHash, OnHandshakeReceived);
@@ -426,6 +427,7 @@ public static class HandshakeManager
             if (HudManager.Instance?.Notifier != null)
             {
                 HudManager.Instance.Notifier.AddDisconnectMessage(message);
+                
             }
             else
             {

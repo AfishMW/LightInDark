@@ -56,6 +56,7 @@ public partial class LightPlugin : BasePlugin
                 Log.LogError($"VM json 加载失败。具体异常请查看Light.log。");
             LoadCommand();
             LightOptionsRegistry.Register();
+            DebugConfig.Register();          // 配置块：调试设置（金色分类）
             EventSystem.RegisterAssembly(typeof(LightPlugin).Assembly);
             ExtractLanguageFiles();
             Language.Load();

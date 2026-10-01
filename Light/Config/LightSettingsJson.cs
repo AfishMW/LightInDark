@@ -40,8 +40,7 @@ public static class LightSettings
         /// </summary>
         public bool SkipLoadAnimation { get; set; } = false;
         /// <summary>
-        /// 模组验证服务器地址（留空 = 禁用手握校验）。
-        /// 默认启用官方验证服务器。
+        /// 模组验证服务器地址
         /// </summary>
         public string VerifyServerUrl { get; set; } = "https://lidverify.moonscar.cn";
         /// <summary>
