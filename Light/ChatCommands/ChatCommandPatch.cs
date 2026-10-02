@@ -1,3 +1,4 @@
+using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Il2CppSystem.Linq.Expressions.Interpreter;
 using InnerNet;
@@ -5,6 +6,7 @@ using Light.Patches;
 using Light.Roles.Crewmates;
 using Light.UI.HudUI;
 using Light.UI.Window;
+using Light.Utilities;
 using LightInDark.Audio;
 using LightInDark.Core;
 using LightInDark.Game;
@@ -167,6 +169,32 @@ public class PatchManager
                     catch(Exception ex)
                     {
                         LightLogger.LogWarning($"踢人失败:{ex.Message}");
+                        __instance.freeChatField.Clear();
+                        return false;
+                    }
+                case "/debug":
+                    try
+                    {
+                        if (!isHost)
+                        {
+                            SendLocalMessage("仅房主可使用 /debug 指令");
+                            __instance.freeChatField.Clear();
+                            return false;
+                        }
+                        if (parts.Length < 2 || parts[1] != "1")
+                        {
+                            SendLocalMessage("用法: /debug 1 （添加10个假人）");
+                            __instance.freeChatField.Clear();
+                            return false;
+                        }
+                        var co = DummySpawner.CoSpawn(10, msg => SendLocalMessage(msg));
+                        HudManager.Instance.StartCoroutine(co.WrapToIl2Cpp());
+                        __instance.freeChatField.Clear();
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        LightLogger.LogWarning($"添加假人失败:{ex.Message}");
                         __instance.freeChatField.Clear();
                         return false;
                     }

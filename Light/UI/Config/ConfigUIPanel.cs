@@ -53,10 +53,35 @@ namespace Light.UI.Config
         /// <summary>本页承载的容器（挂在 MOD 设置页下）。</summary>
         private static GameObject _page;
         private static Transform _container;
+        /// <summary>当前分类过滤（null = 全部显示）。</summary>
+        private static ConfigCategory[]? _categoryFilter;
+        /// <summary>单职业模式：只渲染这一个块（职业配置页）。</summary>
+        private static ConfigBlock? _singleBlock;
+        /// <summary>单职业模式：返回按钮的回调（回职业列表页）。</summary>
+        private static Action? _onBack;
         private static readonly List<GameObject> _spawned = new();
         private static readonly Dictionary<ConfigItem, ConfigRowDriver> _drivers = new();
 
         public static bool Built => _page != null;
+
+        /// <summary>按分类过滤显示配置块（切换 MOD 设置页的标签时调用）。</summary>
+        public static void Show(ConfigCategory[] categories, Transform parent)
+        {
+            _categoryFilter = categories;
+            _singleBlock = null;
+            _onBack = null;
+            Rebuild(parent);
+        }
+
+        /// <summary>单职业模式：只渲染一个职业块，顶部带返回按钮（点击回职业列表）。</summary>
+        public static void ShowRole(ConfigBlock block, Transform parent, Action onBack)
+        {
+            Clear();
+            _categoryFilter = null;
+            _singleBlock = block;
+            _onBack = onBack;
+            Build(parent);
+        }
 
         /// <summary>在给定父级下构建配置面板（幂等：已建则只刷新值）。</summary>
         public static void Build(Transform parent)
@@ -68,8 +93,21 @@ namespace Light.UI.Config
                 _page = NewUIObject("LightConfigPage", parent, new Vector3(0f, 0f, RowZ));
                 _container = _page.transform;
 
-                // 只渲染调试块（本轮范围）：金色分类头 + 两项配置
-                BuildBlock(DebugConfig.Block);
+                if (_singleBlock != null)
+                {
+                    // 单职业模式（独立新页面，标签行已隐藏）：返回按钮在原标签行位置，仅渲染这一个块
+                    float y = AddBackButton(0.8f);
+                    BuildBlock(_singleBlock, y);
+                }
+                else
+                {
+                    // 渲染所有已注册配置块（按分类过滤：调试块/职业块均在 ConfigRegistry 中）
+                    foreach (var block in ConfigRegistry.Blocks)
+                    {
+                        if (!MatchesFilter(block)) continue;
+                        BuildBlock(block);
+                    }
+                }
 
                 LightLogger.Log($"[ConfigUIPanel] 已构建配置面板，行数 {_spawned.Count}");
             }
@@ -77,6 +115,15 @@ namespace Light.UI.Config
             {
                 LightLogger.LogError("[ConfigUIPanel.Build]", ex);
             }
+        }
+
+        /// <summary>块是否通过当前分类过滤。</summary>
+        private static bool MatchesFilter(ConfigBlock block)
+        {
+            if (_categoryFilter == null || _categoryFilter.Length == 0) return true;
+            foreach (var c in _categoryFilter)
+                if (block.Category == c) return true;
+            return false;
         }
 
         /// <summary>清空重建（值变化导致可见性变化时调用）。</summary>
@@ -99,11 +146,11 @@ namespace Light.UI.Config
         //  构建
         // =====================================================================
 
-        private static void BuildBlock(ConfigBlock block)
+        private static void BuildBlock(ConfigBlock block, float startY = StartY)
         {
             if (block == null) return;
 
-            float y = StartY;
+            float y = startY;
             y = AddCategoryHeader(block, y);
 
             foreach (var item in block.Items)
@@ -111,6 +158,30 @@ namespace Light.UI.Config
                 if (!item.IsVisible) continue;         // 依赖项未满足 → 不建行
                 y = AddConfigRow(item, y);
             }
+        }
+
+        /// <summary>单职业模式顶部的返回按钮，返回下一个 y。</summary>
+        private static float AddBackButton(float y)
+        {
+            var go = NewUIObject("LightConfigBack", _container, new Vector3(HeaderX + 0.35f, y, RowZ));
+            _spawned.Add(go);
+
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = GetRoundedSprite();
+            sr.drawMode = SpriteDrawMode.Sliced;
+            sr.size = new Vector2(0.9f, 0.32f);
+            sr.color = new UColor(0.2f, 0.2f, 0.2f, 0.9f);
+
+            MenuTextTemplate.Create(go.transform, new Vector3(0f, 0f, -0.1f), "< 返回", 0.8f);
+
+            var col = go.AddComponent<BoxCollider2D>();
+            col.isTrigger = true;
+            col.size = new Vector2(0.9f, 0.32f);
+
+            var pb = go.SetUpButton(true, null, null, null, false);
+            pb.OnClick.AddListener((UnityAction)(() => _onBack?.Invoke()));
+
+            return y - 0.42f;
         }
 
         /// <summary>金色分类头：克隆原版 CategoryHeaderMasked。</summary>
@@ -183,142 +254,116 @@ namespace Light.UI.Config
             }
         }
 
-        /// <summary>建一行配置项，返回下一个 y。</summary>
+        // ---- 自绘行的布局常量（相对行锚点） ----
+        private const float NameX = -1.3f;    // 名字文本中心
+        private const float MinusX = 1.45f;   // [-] 按钮中心
+        private const float ValueX = 2.05f;   // 值/开关中心
+        private const float PlusX = 2.65f;    // [+] 按钮中心
+        private const float CtrlH = 0.34f;    // 控件高度
+        private static readonly UColor BtnColor = new(0.30f, 0.30f, 0.30f, 0.95f);
+        private static readonly UColor ToggleOn = new(0.30f, 0.75f, 0.40f, 1f);
+        private static readonly UColor ToggleOff = new(0.28f, 0.28f, 0.28f, 0.95f);
+
+        /// <summary>建一行配置项（自绘控件，不依赖原版行模板），返回下一个 y。</summary>
         private static float AddConfigRow(ConfigItem item, float y)
         {
             var row = NewUIObject($"LightConfigRow_{item.Key}", _container, new Vector3(RowX, y, RowZ));
             _spawned.Add(row);
 
+            var driver = row.AddComponent<ConfigRowDriver>();
+
             switch (item.Type)
             {
                 case ConfigType.Bool:
-                    BuildToggleRow(row, item);
+                    BuildToggleRow(row, item, driver);
                     break;
                 case ConfigType.Value:
                 case ConfigType.Filter:
-                    BuildStringRow(row, item);
+                    BuildStringRow(row, item, driver);
                     break;
                 default:
-                    BuildNumberRow(row, item);
+                    BuildNumberRow(row, item, driver);
                     break;
             }
+
+            _drivers[item] = driver;
+            WireHover(row, item);
+            driver.RefreshVisual();
 
             return y - SpacingY;
         }
 
-        /// <summary>Bool：原版勾选框行（克隆 ToggleOption 的 CheckMark + TitleText）。</summary>
-        private static void BuildToggleRow(GameObject row, ConfigItem item)
+        /// <summary>行左侧的名字文本（带可选配色）。</summary>
+        private static void RowName(GameObject row, ConfigItem item)
         {
-            var toggle = CloneRowComponent<ToggleOption>(row, item, out var template);
-            if (toggle == null) return;
-
-            // 停掉原版每帧回写（它读的是 data，不是我们的值）
-            toggle.enabled = false;
-
-            var driver = row.AddComponent<ConfigRowDriver>();
-            driver.Bind(item, toggle, null);
-            _drivers[item] = driver;
-
-            WireHover(row, item);
-            driver.RefreshVisual();
+            var tmp = RowText(row.transform, new Vector3(NameX, 0f, -0.1f), item.DisplayName ?? item.Key, 1.0f);
+            if (tmp != null && item.NameColor.HasValue) tmp.color = item.NameColor.Value;
         }
 
-        /// <summary>Int/Float：原版数值行（- / 值 / +）。</summary>
-        private static void BuildNumberRow(GameObject row, ConfigItem item)
+        /// <summary>Bool：名字 + 开/关按钮（点击切换，底色随状态变化）。</summary>
+        private static void BuildToggleRow(GameObject row, ConfigItem item, ConfigRowDriver driver)
         {
-            var number = CloneRowComponent<NumberOption>(row, item, out var template);
-            if (number == null) return;
-
-            number.enabled = false;                 // 停掉 FixedUpdate 的 data 回写
-
-            // 原版 +/- 按钮各自带原版逻辑，必须整体替换 OnClick
-            var driver = row.AddComponent<ConfigRowDriver>();
-            driver.Bind(item, null, number);
-            _drivers[item] = driver;
-
-            HookPlusMinus(row, driver);
-            WireHover(row, item);
-            driver.RefreshVisual();
+            RowName(row, item);
+            var label = RowButton(row.transform, "Toggle", new Vector3(ValueX, 0f, 0f), 1.0f, CtrlH,
+                ToggleOff, "", () => driver.Step(1));
+            driver.BindCustom(item, label, label.GetComponentInParent<SpriteRenderer>(), ToggleOn, ToggleOff);
         }
 
-        /// <summary>Value/Filter：原版字符串行（循环切换）。</summary>
-        private static void BuildStringRow(GameObject row, ConfigItem item)
+        /// <summary>Int/Float：名字 + [-] 值 [+]。</summary>
+        private static void BuildNumberRow(GameObject row, ConfigItem item, ConfigRowDriver driver)
         {
-            var str = CloneRowComponent<StringOption>(row, item, out var template);
-            if (str == null)
-            {
-                // 没有 StringOption 模板时退化成数值行，至少能改
-                BuildNumberRow(row, item);
-                return;
-            }
+            RowName(row, item);
+            RowButton(row.transform, "Minus", new Vector3(MinusX, 0f, 0f), 0.4f, CtrlH, BtnColor, "-", () => driver.Step(-1));
+            var value = RowButton(row.transform, "Value", new Vector3(ValueX, 0f, 0f), 1.0f, CtrlH, BtnColor, "", null);
+            RowButton(row.transform, "Plus", new Vector3(PlusX, 0f, 0f), 0.4f, CtrlH, BtnColor, "+", () => driver.Step(1));
+            driver.BindCustom(item, value, null, default, default);
+        }
 
-            str.enabled = false;
+        /// <summary>Value/Filter：名字 + 值按钮（点击循环切换候选）。</summary>
+        private static void BuildStringRow(GameObject row, ConfigItem item, ConfigRowDriver driver)
+        {
+            RowName(row, item);
+            var value = RowButton(row.transform, "Value", new Vector3(ValueX, 0f, 0f), 1.3f, CtrlH, BtnColor, "", () => driver.Step(1));
+            driver.BindCustom(item, value, null, default, default);
+        }
 
-            var driver = row.AddComponent<ConfigRowDriver>();
-            driver.Bind(item, null, null, str);
-            _drivers[item] = driver;
-
-            WireHover(row, item);
-            driver.RefreshVisual();
+        /// <summary>行内文本（走统一文字模板）。</summary>
+        private static TextMeshPro RowText(Transform parent, Vector3 pos, string text, float fontSize)
+        {
+            var tmp = MenuTextTemplate.Create(parent, pos, text, fontSize);
+            if (tmp != null) tmp.ForceMeshUpdate();
+            return tmp;
         }
 
         /// <summary>
-        /// 克隆原版行控件到我们自己的 row 下。
-        /// 返回克隆出的组件；模板缺失时返回 null。
+        /// 行内圆角小按钮（底 = 圆角 sprite，悬浮变亮），返回文字引用便于外部改写。
+        /// onClick 为 null 时只显示不响应。
         /// </summary>
-        private static T? CloneRowComponent<T>(GameObject row, ConfigItem item, out T? template) where T : OptionBehaviour
+        private static TextMeshPro RowButton(Transform parent, string name, Vector3 pos,
+            float w, float h, UColor color, string label, Action onClick)
         {
-            template = null;
-            try
+            var go = NewUIObject(name, parent, pos);
+
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = GetRoundedSprite();
+            sr.drawMode = SpriteDrawMode.Sliced;
+            sr.size = new Vector2(w, h);
+            sr.color = color;
+
+            var tmp = MenuTextTemplate.Create(go.transform, new Vector3(0f, 0f, -0.1f), label, 0.9f);
+
+            var col = go.AddComponent<BoxCollider2D>();
+            col.isTrigger = true;
+            col.size = new Vector2(w, h);
+
+            var pb = go.SetUpButton(true, null, null, null, false);
+            if (onClick != null)
             {
-                template = FindRowTemplate<T>();
-                if (template == null)
-                {
-                    LightLogger.LogWarning($"[ConfigUIPanel] 找不到原版行模板 {typeof(T).Name}，跳过 {item.Key}");
-                    return null;
-                }
-
-                var clone = Object.Instantiate(template, row.transform);
-                clone.name = $"Row_{item.Key}";
-                clone.transform.localPosition = Vector3.zero;
-                clone.transform.localScale = Vector3.one;
-                clone.gameObject.SetActive(true);
-
-                // 清掉原版的点击逻辑（必须整体替换）
-                var pb = clone.GetComponent<PassiveButton>();
-                if (pb != null) pb.OnClick = new UnityEngine.UI.Button.ButtonClickedEvent();
-
-                return clone;
+                pb.OnClick.AddListener((UnityAction)(() => onClick()));
+                pb.OnMouseOver.AddListener((UnityAction)(() => sr.color = UColor.Lerp(color, UColor.white, 0.35f)));
+                pb.OnMouseOut.AddListener((UnityAction)(() => sr.color = color));
             }
-            catch (Exception ex)
-            {
-                LightLogger.LogError("[ConfigUIPanel.CloneRowComponent]", ex);
-                return null;
-            }
-        }
-
-        /// <summary>把 +/- 按钮接到我们自己的增减逻辑。</summary>
-        private static void HookPlusMinus(GameObject row, ConfigRowDriver driver)
-        {
-            try
-            {
-                foreach (var pb in row.GetComponentsInChildren<PassiveButton>(true))
-                {
-                    if (pb == null) continue;
-                    string n = pb.gameObject.name.ToLowerInvariant();
-                    bool isPlus = n.Contains("plus");
-                    bool isMinus = n.Contains("minus");
-                    if (!isPlus && !isMinus) continue;
-
-                    pb.OnClick = new UnityEngine.UI.Button.ButtonClickedEvent();
-                    bool plus = isPlus;
-                    pb.OnClick.AddListener((UnityAction)(() => driver.Step(plus ? +1 : -1)));
-                }
-            }
-            catch (Exception ex)
-            {
-                LightLogger.LogWarning($"[ConfigUIPanel.HookPlusMinus] {ex.Message}");
-            }
+            return tmp;
         }
 
         /// <summary>悬浮显示详情（走本工程已有的 DetailPopup）。</summary>
@@ -328,10 +373,11 @@ namespace Light.UI.Config
 
             try
             {
+                // 碰撞区只盖住左侧名字区域，避免挡住右侧 +/- / 开关按钮
                 var col = row.AddComponent<BoxCollider2D>();
                 col.isTrigger = true;
-                col.size = new Vector2(6.2f, 0.42f);
-                col.offset = new Vector2(0f, 0f);
+                col.size = new Vector2(3.4f, 0.42f);
+                col.offset = new Vector2(NameX, 0f);
 
                 var pb = row.GetComponent<PassiveButton>() ?? row.AddComponent<PassiveButton>();
                 pb.OnMouseOver ??= new Button.ButtonClickedEvent();
@@ -381,6 +427,33 @@ namespace Light.UI.Config
         //  模板查找
         // =====================================================================
 
+        private static Sprite? _roundedSprite;
+
+        /// <summary>圆角长方形 sprite（带 9 宫格边框，Sliced 任意拉伸；列表/返回按钮共用）。</summary>
+        internal static Sprite GetRoundedSprite()
+        {
+            if (_roundedSprite != null) return _roundedSprite;
+
+            const int w = 64, h = 32, r = 10;
+            var tex = new Texture2D(w, h, TextureFormat.ARGB32, false);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    // 像素到圆角矩形边缘的距离 → 1px 抗锯齿
+                    float dx = Mathf.Max(Mathf.Abs(x + 0.5f - w * 0.5f) - (w * 0.5f - r), 0f);
+                    float dy = Mathf.Max(Mathf.Abs(y + 0.5f - h * 0.5f) - (h * 0.5f - r), 0f);
+                    float a = Mathf.Clamp01(r - Mathf.Sqrt(dx * dx + dy * dy));
+                    tex.SetPixel(x, y, new UColor(1f, 1f, 1f, a));
+                }
+            }
+            tex.Apply();
+
+            _roundedSprite = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 100f,
+                0, SpriteMeshType.FullRect, new Vector4(r, r, r, r));
+            return _roundedSprite;
+        }
+
         private static CategoryHeaderMasked FindHeaderTemplate()
         {
             try
@@ -397,21 +470,6 @@ namespace Light.UI.Config
             catch { return null; }
         }
 
-        private static T? FindRowTemplate<T>() where T : OptionBehaviour
-        {
-            try
-            {
-                var menu = GameSettingMenu.Instance;
-                if (menu != null)
-                {
-                    var t = menu.GetComponentInChildren<T>(true);
-                    if (t != null) return t;
-                }
-                return Object.FindObjectOfType<T>(true);
-            }
-            catch { return null; }
-        }
-
         private static GameObject NewUIObject(string name, Transform parent, Vector3 localPos)
         {
             var go = new GameObject(name);
@@ -424,26 +482,27 @@ namespace Light.UI.Config
     }
 
     /// <summary>
-    /// 一行配置项的驱动器：把配置值写进原版控件的显示部件。
-    /// 因为原版控件的 Update/FixedUpdate 已被 <c>enabled = false</c> 停掉，
-    /// 显示完全由这里负责。
+    /// 一行配置项的驱动器：把配置值写进行内的自绘控件（值文本 + 可选开关底色）。
     /// </summary>
     public class ConfigRowDriver : MonoBehaviour
     {
         private ConfigItem _item;
-        private ToggleOption _toggle;
-        private NumberOption _number;
-        private StringOption _string;
+        private TextMeshPro _valueLabel;   // 值/开关文字
+        private SpriteRenderer _toggleBg;  // Bool 开关底色（可空）
+        private UColor _onColor, _offColor;
 
         /// <summary>上一次的可见性（用于检测是否需要重建面板）。</summary>
         public bool WasVisible { get; private set; }
 
-        public void Bind(ConfigItem item, ToggleOption toggle, NumberOption number, StringOption str = null)
+        /// <summary>绑定自绘行：valueLabel 显示取值文本；toggleBg 仅 Bool 行用来变色。</summary>
+        public void BindCustom(ConfigItem item, TextMeshPro valueLabel, SpriteRenderer toggleBg,
+            UColor onColor, UColor offColor)
         {
             _item = item;
-            _toggle = toggle;
-            _number = number;
-            _string = str;
+            _valueLabel = valueLabel;
+            _toggleBg = toggleBg;
+            _onColor = onColor;
+            _offColor = offColor;
             WasVisible = item.IsVisible;
         }
 
@@ -454,24 +513,11 @@ namespace Light.UI.Config
             {
                 if (_item == null) return;
 
-                // 标题：我们的显示名（原版行文字走翻译键，这里直接写）
-                var title = GetTitleText();
-                if (title != null)
-                {
-                    var tr = title.GetComponent<TextTranslatorTMP>();
-                    if (tr != null) tr.enabled = false;
-                    title.text = _item.DisplayName ?? _item.Key;
-                    if (_item.NameColor.HasValue) title.color = _item.NameColor.Value;
-                }
+                if (_valueLabel != null)
+                    _valueLabel.text = _item.GetValueText();
 
-                // Bool：勾选状态
-                if (_toggle != null && _toggle.CheckMark != null)
-                    _toggle.CheckMark.enabled = _item.GetBool();
-
-                // Int/Float/Value：值文本
-                var valueText = GetValueText();
-                if (valueText != null)
-                    valueText.text = _item.GetValueText();
+                if (_toggleBg != null)
+                    _toggleBg.color = _item.GetBool() ? _onColor : _offColor;
             }
             catch (Exception ex)
             {
@@ -500,21 +546,6 @@ namespace Light.UI.Config
             {
                 LightLogger.LogError("[ConfigRowDriver.Step]", ex);
             }
-        }
-
-        private TextMeshPro GetTitleText()
-        {
-            if (_toggle != null) return _toggle.TitleText;
-            if (_number != null) return _number.TitleText;
-            if (_string != null) return _string.TitleText;
-            return GetComponentInChildren<TextMeshPro>(true);
-        }
-
-        private TextMeshPro GetValueText()
-        {
-            if (_number != null) return _number.ValueText;
-            if (_string != null) return _string.ValueText;
-            return null;
         }
     }
 }

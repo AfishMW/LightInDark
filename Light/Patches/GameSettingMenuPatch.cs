@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
+using LightInDark.Configuration;
 using LightInDark.Core;
 using LightInDark.Language;
 using LightInDark.UI.Window;
@@ -33,6 +35,17 @@ public static class GameSettingMenuPatch
         ("NEU",   "中立",  new UColor(0.55f, 0.55f, 0.55f, 1f)), // 灰
         ("MODI",  "附加",  new UColor(1.00f, 0.85f, 0.20f, 1f)), // 黄
         ("GHOST", "幽灵",  new UColor(0.90f, 0.90f, 0.90f, 1f)), // 白
+    };
+
+    /// <summary>各标签对应的配置分类（与 ModTabs 下标一一对应）。</summary>
+    private static readonly ConfigCategory[][] ModTabCategories =
+    {
+        new[] { ConfigCategory.Mod, ConfigCategory.Debug }, // MOD：通用 + 调试
+        new[] { ConfigCategory.Crewmate },
+        new[] { ConfigCategory.Impostor },
+        new[] { ConfigCategory.Neutral },
+        new[] { ConfigCategory.Modifier },
+        new[] { ConfigCategory.Ghost },
     };
 
     private static readonly string[] PresetLabels =
@@ -139,6 +152,10 @@ public static class GameSettingMenuPatch
     private static GameObject? _presetsPage;
     private static GameObject? _modPage;
     private static TextMeshPro? _modPlaceholderText;
+    /// <summary>当前打开的 MOD 页标签下标（职业配置页返回列表时用）。</summary>
+    private static int _currentTab;
+    /// <summary>6 个标签按钮（打开职业配置新页面时整行隐藏）。</summary>
+    private static readonly GameObject?[] _tabButtons = new GameObject?[6];
 
     // =====================================================================
     //  Harmony Patches
@@ -172,6 +189,7 @@ public static class GameSettingMenuPatch
         _modPage = null;
         _modPlaceholderText = null;
         Light.UI.Config.ConfigUIPanel.Clear();
+        Light.UI.Config.RoleListPage.Clear();
     }
 
     /// <summary>预设页启用时：只显示我们的框架页，隐藏原版预设内容。</summary>
@@ -315,7 +333,10 @@ public static class GameSettingMenuPatch
                 if (rsm != null) rolesTab = rsm.transform;
             }
             if (rolesTab != null)
+            {
                 _modPage = BuildModPage(rolesTab);
+                ShowTabConfig(0);   // 默认显示第一个标签内容（须在 _modPage 赋值之后）
+            }
             else
                 LightLogger.LogWarning("[GameSettingMenuPatch] 未找到 MOD 设置页容器");
         }
@@ -400,17 +421,13 @@ public static class GameSettingMenuPatch
         for (int i = 0; i < ModTabs.Length; i++)
         {
             int idx = i;
-            CreateTabButton(page.transform, ModTabs[i].Key, ModTabs[i].BorderColor,
+            _tabButtons[i] = CreateTabButton(page.transform, ModTabs[i].Key, ModTabs[i].BorderColor,
                 new Vector2((i - 2.5f) * TabSpacing, 0.8f),
                 (UnityAction)(() => OnModTabClicked(idx)), i);
         }
 
-        // 占位提示（点击标签后显示「XX页签暂未实现。」）
+        // 占位提示（无内容分类显示「XX页签暂未实现。」）
         _modPlaceholderText = CloneText(page.transform, new Vector3(0f, -0.8f, -0.1f), "", 1.5f);
-
-        // 配置项面板：金色「调试设置」分类头 + 其下的配置行（原版控件）
-        // 放在标签行下方，与彩边标签错开
-        Light.UI.Config.ConfigUIPanel.Build(page.transform);
 
         return page;
     }
@@ -420,7 +437,7 @@ public static class GameSettingMenuPatch
     /// 中间放该标签自己的常态图 + 悬停图（6 组共 12 张，资源缺失时中间留空）。
     /// 标签上不显示文字。
     /// </summary>
-    private static void CreateTabButton(Transform parent, string key, UColor borderColor,
+    private static GameObject CreateTabButton(Transform parent, string key, UColor borderColor,
         Vector2 pos, UnityAction onClick, int index)
     {
         var normal = index < _tabNormal.Length ? _tabNormal[index] : null;
@@ -458,19 +475,94 @@ public static class GameSettingMenuPatch
         {
             if (normal != null) iconSr.sprite = normal;
         }));
+        return go;
     }
 
     private static void OnModTabClicked(int index)
     {
         try
         {
-            if (_modPlaceholderText == null) return;
-            _modPlaceholderText.text = $"{ModTabs[index].Cn}页签暂未实现。";
+            ShowTabConfig(index);
         }
         catch (Exception ex)
         {
             LightLogger.LogError("[GameSettingMenuPatch.OnModTabClicked]", ex);
         }
+    }
+
+    /// <summary>
+    /// 切换到某标签（两级布局）：
+    ///  - 该分类下有职业块（lid.role.*）→ 显示职业按钮列表，点击进入职业配置页；
+    ///  - 只有其他块（MOD/调试）→ 平铺渲染；
+    ///  - 什么都没有 → 占位提示。
+    /// </summary>
+    private static void ShowTabConfig(int index)
+    {
+        if (_modPage == null) return;
+        _currentTab = index;
+        SetTabButtonsVisible(true);   // 从职业配置页切回来时恢复标签行
+
+        var cats = ModTabCategories[index];
+        var roleBlocks = new List<ConfigBlock>();
+        bool hasOther = false;
+        foreach (var block in ConfigRegistry.Blocks)
+        {
+            if (!MatchesCats(block, cats)) continue;
+            if (block.Key.StartsWith("lid.role.")) roleBlocks.Add(block);
+            else hasOther = true;
+        }
+
+        if (_modPlaceholderText != null) _modPlaceholderText.text = "";
+
+        if (roleBlocks.Count > 0)
+        {
+            // 职业列表页（覆盖配置面板）
+            Light.UI.Config.ConfigUIPanel.Clear();
+            Light.UI.Config.RoleListPage.Show(roleBlocks, _modPage.transform, OnRoleSelected);
+        }
+        else if (hasOther)
+        {
+            Light.UI.Config.RoleListPage.Clear();
+            Light.UI.Config.ConfigUIPanel.Show(cats, _modPage.transform);
+        }
+        else
+        {
+            Light.UI.Config.RoleListPage.Clear();
+            Light.UI.Config.ConfigUIPanel.Clear();
+            if (_modPlaceholderText != null)
+                _modPlaceholderText.text = $"{ModTabs[index].Cn}页签暂未实现。";
+        }
+    }
+
+    /// <summary>块是否属于任一给定分类。</summary>
+    private static bool MatchesCats(ConfigBlock block, ConfigCategory[] cats)
+    {
+        foreach (var c in cats)
+            if (block.Category == c) return true;
+        return false;
+    }
+
+    /// <summary>点击职业按钮：隐藏标签行，打开该职业的独立配置页（带返回按钮）。</summary>
+    private static void OnRoleSelected(ConfigBlock block)
+    {
+        Light.UI.Config.RoleListPage.Clear();
+        SetTabButtonsVisible(false);
+        Light.UI.Config.ConfigUIPanel.ShowRole(block, _modPage.transform, OnRolePageBack);
+    }
+
+    /// <summary>职业配置页点返回：恢复标签行，回到职业列表。</summary>
+    private static void OnRolePageBack()
+    {
+        Light.UI.Config.ConfigUIPanel.Clear();
+        SetTabButtonsVisible(true);
+        ShowTabConfig(_currentTab);
+    }
+
+    /// <summary>显示/隐藏 6 个分类标签按钮。</summary>
+    private static void SetTabButtonsVisible(bool visible)
+    {
+        foreach (var btn in _tabButtons)
+            if (btn != null) btn.SetActive(visible);
     }
 
     // =====================================================================

@@ -105,11 +105,19 @@ public class StandardRoleAllocator : IRoleAllocator
         }
     }
 
-    /// <summary>读取职业最大数量（配置系统已删，直接使用代码 Allocation 默认）。</summary>
+    /// <summary>读取职业最大数量：优先读配置 role.&lt;CodeName&gt;.count，无配置时回退 Allocation 默认。</summary>
     public static int GetMaxCount(Role role)
-        => role.Allocation.MaxCount;
+    {
+        var item = ConfigRegistry.Get($"role.{role.CodeName}.count");
+        if (item != null) return item.GetInt();
+        return role.Allocation.MaxCount;
+    }
 
-    /// <summary>读取职业分配概率（配置系统已删，直接使用代码 Allocation 默认）。</summary>
+    /// <summary>读取职业分配概率：优先读配置 role.&lt;CodeName&gt;.chance，无配置时回退 Allocation 默认。</summary>
     public static int GetChance(Role role)
-        => role.Allocation.Chance;
+    {
+        var item = ConfigRegistry.Get($"role.{role.CodeName}.chance");
+        if (item != null) return item.GetInt();
+        return role.Allocation.Chance;
+    }
 }

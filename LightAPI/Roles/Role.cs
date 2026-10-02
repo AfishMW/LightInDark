@@ -85,6 +85,9 @@ namespace LightInDark.Roles
             }
         }
 
+        /// <summary>声明本职业的专属配置项（通用数量/概率由注册器自动生成，勿在此重复）。</summary>
+        public virtual void BuildConfigurations(Configuration.ConfigBlock block) { }
+
         // =====================================================================
         // 显示文本（语言键解析）
         // =====================================================================

@@ -10,6 +10,7 @@ using Light.Config;
 using Light.News;
 using Light.Patches;
 using Light.Roles.Crewmates;
+using Light.Roles.Impostors;
 using Light.Roles.Vanilla;
 using LightInDark.Core;
 using LightInDark.Events;
@@ -17,6 +18,7 @@ using LightInDark.Language;
 using LightInDark.Roles;
 using LightInDark.RPCs;
 using System;
+using System.Text.Json;
 using UnityEngine.SceneManagement;
 
 namespace Light;
@@ -64,6 +66,7 @@ public partial class LightPlugin : BasePlugin
             ColorData = MainColor.LoadChatColor();
             PaletteColorOverride.Apply();
             LoadRole();
+            RoleConfigRegistrar.Register();   // 职业配置块：数量/概率 + 职业专属项
             Dispatcher.Initialize();
 #if !DEBUG
             LightLogger.ClearLog();
@@ -118,6 +121,11 @@ public partial class LightPlugin : BasePlugin
         }
     }
 
+    /// <summary>
+    /// 解压语言文件到游戏目录 Language 文件夹。
+    /// 文件不存在 → 直接写出；已存在 → 只补充缺失的词条（不覆盖用户已有的翻译）。
+    /// 这样新增职业的本地化词条会随版本更新自动合并进旧语言文件。
+    /// </summary>
     private static void ExtractLanguageFiles()
     {
         try
@@ -129,11 +137,35 @@ public partial class LightPlugin : BasePlugin
             {
                 string fileName = res.Substring(res.LastIndexOf('.', res.LastIndexOf('.') - 1) + 1);
                 string path = Path.Combine(folder, fileName);
-                if (File.Exists(path)) continue;
-                using var stream = asm.GetManifestResourceStream(res);
-                if (stream == null) continue;
-                using var fs = File.Create(path);
-                stream.CopyTo(fs);
+
+                Dictionary<string, string> embedded;
+                using (var stream = asm.GetManifestResourceStream(res))
+                {
+                    if (stream == null) continue;
+                    using var reader = new StreamReader(stream);
+                    embedded = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.ReadToEnd());
+                }
+                if (embedded == null || embedded.Count == 0) continue;
+
+                if (!File.Exists(path))
+                {
+                    File.WriteAllText(path, JsonSerializer.Serialize(embedded, new JsonSerializerOptions { WriteIndented = true }), System.Text.Encoding.UTF8);
+                    continue;
+                }
+
+                // 已存在：合并缺失词条
+                var disk = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path, System.Text.Encoding.UTF8));
+                if (disk == null) { disk = new Dictionary<string, string>(); }
+                int added = 0;
+                foreach (var kv in embedded)
+                {
+                    if (!disk.ContainsKey(kv.Key)) { disk[kv.Key] = kv.Value; added++; }
+                }
+                if (added > 0)
+                {
+                    File.WriteAllText(path, JsonSerializer.Serialize(disk, new JsonSerializerOptions { WriteIndented = true }), System.Text.Encoding.UTF8);
+                    StaticLog.LogInfo($"语言文件 {fileName} 合并了 {added} 条新词条");
+                }
             }
         }
         catch (Exception ex)
@@ -163,6 +195,7 @@ public partial class LightPlugin : BasePlugin
         try
         {
             RoleRegistry.Register<Caller>();
+            RoleRegistry.Register<BloodThirstyKiller>();
             RoleRegistry.Register(VanillaImpostor.Instance);
             RoleRegistry.Register(VanillaCrewmate.Instance);
         }
